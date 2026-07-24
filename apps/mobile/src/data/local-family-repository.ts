@@ -163,6 +163,7 @@ export function createLocalFamilyRepository(seed: FamilySnapshot): FamilyReposit
             level: 1,
             name: parsed.displayName,
             points: 0,
+            pinConfigured: false,
             streakDays: 0,
             totalToday: 0,
           },

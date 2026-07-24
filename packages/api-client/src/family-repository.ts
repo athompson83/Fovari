@@ -1,10 +1,19 @@
-import type { ExperienceMode, FamilyActor, PointTransaction } from "@fovari/domain";
 import type {
+  ExperienceMode,
+  FamilyActor,
+  OnboardingState,
+  PointTransaction,
+} from "@fovari/domain";
+import type {
+  ConfigureChildPinInput,
   CreateChildInput,
   CreateFamilyInput,
   CreateGoalInput,
+  NotificationPreferencesInput,
+  OnboardingChildDraftInput,
   RequestRedemptionCommandInput,
   SubmitCompletionInput,
+  UnlockChildInput,
 } from "@fovari/validation";
 
 import type { CommandContext } from "./commands";
@@ -17,6 +26,7 @@ export interface ChildSummary {
   level: number;
   name: string;
   points: number;
+  pinConfigured: boolean;
   streakDays: number;
   totalToday: number;
 }
@@ -82,10 +92,50 @@ export interface AchievementSummary {
   title: string;
 }
 
+export type FamilySession =
+  | { kind: "signed_out" }
+  | { actorId: string; kind: "adult" }
+  | { actorId: string; childId: string; kind: "child" };
+
+export interface LocalAdultSummary {
+  displayName: string;
+  id: string;
+}
+
+export interface NotificationPreferences extends NotificationPreferencesInput {}
+
+export interface OnboardingDraft {
+  adultDisplayName: string;
+  childDrafts: readonly OnboardingChildDraftInput[];
+  familyName: string;
+  notificationPreferences: NotificationPreferences;
+  pointsName: string;
+  selectedStarterGoalIds: readonly string[];
+  selectedStarterRewardIds: readonly string[];
+  timezone: string;
+}
+
+export interface BeginFamilySetupInput {
+  adultDisplayName: string;
+}
+
+export interface SaveOnboardingDraftInput {
+  draft: OnboardingDraft;
+  onboarding: OnboardingState;
+}
+
+export interface CompleteFamilySetupInput {
+  childPins: Readonly<Record<string, string>>;
+  draft: OnboardingDraft;
+}
+
+export type { ConfigureChildPinInput, UnlockChildInput };
+
 export interface FamilySnapshot {
   achievements: readonly AchievementSummary[];
   activeActor: FamilyActor;
   activeChildId: string;
+  adult: LocalAdultSummary;
   calendar: readonly CalendarItem[];
   children: readonly ChildSummary[];
   completions: readonly CompletionSummary[];
@@ -93,9 +143,15 @@ export interface FamilySnapshot {
   familyName: string;
   goals: readonly GoalSummary[];
   ledger: readonly PointTransaction[];
+  notificationPreferences: NotificationPreferences;
+  onboarding: OnboardingState;
+  onboardingDraft: OnboardingDraft | null;
+  pointsName: string;
   redemptions: readonly RedemptionSummary[];
   rewards: readonly RewardSummary[];
   selectedRewardByChild: Readonly<Record<string, string>>;
+  session: FamilySession;
+  timezone: string;
 }
 
 export interface ApproveCompletionInput {

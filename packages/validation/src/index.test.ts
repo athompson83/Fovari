@@ -4,6 +4,9 @@ import {
   CreateChildSchema,
   CreateFamilySchema,
   CreateGoalSchema,
+  ConfigureChildPinSchema,
+  NotificationPreferencesSchema,
+  OnboardingChildDraftSchema,
   RequestRedemptionSchema,
   SubmitCompletionSchema,
 } from "./index";
@@ -71,5 +74,36 @@ describe("shared validation", () => {
         rewardId: "not-a-uuid",
       }).success,
     ).toBe(false);
+  });
+
+  it("accepts a synthetic child draft and strict optional PIN", () => {
+    expect(
+      OnboardingChildDraftSchema.parse({
+        clientId: "child-draft-1",
+        displayName: "Maya",
+        experienceMode: "explorer",
+        pinRequested: true,
+      }),
+    ).toMatchObject({ displayName: "Maya", pinRequested: true });
+
+    expect(() =>
+      ConfigureChildPinSchema.parse({
+        childId: "20000000-0000-4000-8000-000000000001",
+        pin: "12",
+      }),
+    ).toThrow();
+  });
+
+  it("requires valid quiet hours when notifications are enabled", () => {
+    expect(
+      NotificationPreferencesSchema.parse({
+        approvalUpdates: true,
+        childEncouragement: true,
+        enabled: true,
+        quietHoursEnd: "07:00",
+        quietHoursStart: "20:30",
+        weeklySummary: true,
+      }),
+    ).toMatchObject({ quietHoursStart: "20:30" });
   });
 });

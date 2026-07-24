@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createCommandContext } from "./commands";
+import type { FamilySnapshot } from "./family-repository";
 
 describe("command context", () => {
   it("requires an actor, family, and stable idempotency key", () => {
@@ -42,4 +43,14 @@ describe("command context", () => {
       idempotencyKey: "command",
     });
   });
+});
+
+it("models one explicit signed-out, adult, or child session", () => {
+  const sessions: FamilySnapshot["session"][] = [
+    { kind: "signed_out" },
+    { actorId: "adult-1", kind: "adult" },
+    { actorId: "child-1", childId: "child-1", kind: "child" },
+  ];
+
+  expect(sessions.map((session) => session.kind)).toEqual(["signed_out", "adult", "child"]);
 });

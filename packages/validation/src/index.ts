@@ -87,8 +87,44 @@ export const RequestRedemptionSchema = z.object({
   rewardId: uuid,
 });
 
+const localTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
+
+export const OnboardingChildDraftSchema = z.object({
+  clientId: trimmedText(80),
+  displayName: trimmedText(40),
+  experienceMode: ExperienceModeSchema,
+  pinRequested: z.boolean(),
+});
+
+export const NotificationPreferencesSchema = z.object({
+  approvalUpdates: z.boolean(),
+  childEncouragement: z.boolean(),
+  enabled: z.boolean(),
+  quietHoursEnd: localTime,
+  quietHoursStart: localTime,
+  weeklySummary: z.boolean(),
+});
+
+export const ConfigureChildPinSchema = z.object({
+  childId: uuid,
+  pin: z.string().regex(/^\d{4,6}$/, "Use a 4 to 6 digit PIN."),
+});
+
+export const UnlockChildSchema = z.object({
+  childId: uuid,
+  now: z.number().int().nonnegative(),
+  pin: z
+    .string()
+    .regex(/^\d{4,6}$/)
+    .optional(),
+});
+
 export type CreateFamilyInput = z.infer<typeof CreateFamilySchema>;
 export type CreateChildInput = z.infer<typeof CreateChildSchema>;
 export type CreateGoalInput = z.infer<typeof CreateGoalSchema>;
 export type SubmitCompletionInput = z.infer<typeof SubmitCompletionSchema>;
 export type RequestRedemptionCommandInput = z.infer<typeof RequestRedemptionSchema>;
+export type OnboardingChildDraftInput = z.infer<typeof OnboardingChildDraftSchema>;
+export type NotificationPreferencesInput = z.infer<typeof NotificationPreferencesSchema>;
+export type ConfigureChildPinInput = z.infer<typeof ConfigureChildPinSchema>;
+export type UnlockChildInput = z.infer<typeof UnlockChildSchema>;

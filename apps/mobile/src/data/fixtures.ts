@@ -37,6 +37,7 @@ export const createDemoSeed = (): FamilySnapshot => ({
     role: "family_owner",
   },
   activeChildId: DEMO_IDS.alex,
+  adult: { displayName: "Jamie", id: DEMO_IDS.parent },
   calendar: [
     {
       childId: DEMO_IDS.alex,
@@ -71,6 +72,7 @@ export const createDemoSeed = (): FamilySnapshot => ({
       level: 7,
       name: "Alex",
       points: 240,
+      pinConfigured: false,
       streakDays: 12,
       totalToday: 5,
     },
@@ -82,6 +84,7 @@ export const createDemoSeed = (): FamilySnapshot => ({
       level: 3,
       name: "June",
       points: 35,
+      pinConfigured: false,
       streakDays: 3,
       totalToday: 3,
     },
@@ -168,6 +171,29 @@ export const createDemoSeed = (): FamilySnapshot => ({
       type: "adjustment",
     },
   ],
+  notificationPreferences: {
+    approvalUpdates: true,
+    childEncouragement: true,
+    enabled: true,
+    quietHoursEnd: "07:00",
+    quietHoursStart: "20:30",
+    weeklySummary: true,
+  },
+  onboarding: {
+    completedSteps: [
+      "adult",
+      "family",
+      "children",
+      "starter_goals",
+      "starter_rewards",
+      "notifications",
+      "review",
+    ],
+    currentStep: "complete",
+    status: "complete",
+  },
+  onboardingDraft: null,
+  pointsName: "Stars",
   redemptions: [],
   rewards: [
     {
@@ -207,4 +233,6 @@ export const createDemoSeed = (): FamilySnapshot => ({
     [DEMO_IDS.alex]: DEMO_IDS.headphonesReward,
     [DEMO_IDS.june]: DEMO_IDS.movieReward,
   },
+  session: { actorId: DEMO_IDS.parent, kind: "adult" },
+  timezone: "America/New_York",
 });
