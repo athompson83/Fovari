@@ -777,8 +777,13 @@ describe("OnboardingWizard", () => {
     expect(screen.queryByText(/We repaired your saved setup/)).not.toBeInTheDocument();
   });
 
-  it("rewinds duplicate child client IDs to children while retaining both sanitized drafts", () => {
+  it("blocks duplicate child client IDs after resume rewind until the children are repaired", async () => {
     const base = createDefaultDraftForReview();
+    const saveOnboardingDraft = vi.fn().mockResolvedValue(createDemoSeed());
+    const duplicateChild = {
+      ...base.childDrafts[0]!,
+      pinRequested: false,
+    };
     render(
       <OnboardingWizard
         busy={false}
@@ -787,9 +792,9 @@ describe("OnboardingWizard", () => {
         initialDraft={{
           ...base,
           childDrafts: [
-            base.childDrafts[0]!,
+            duplicateChild,
             {
-              ...base.childDrafts[0]!,
+              ...duplicateChild,
               displayName: "Maya copy",
               pin: "2468",
             } as unknown as OnboardingDraft["childDrafts"][number],
@@ -807,7 +812,7 @@ describe("OnboardingWizard", () => {
           currentStep: "review",
           status: "in_progress",
         }}
-        saveOnboardingDraft={vi.fn()}
+        saveOnboardingDraft={saveOnboardingDraft}
       />,
     );
 
@@ -816,6 +821,60 @@ describe("OnboardingWizard", () => {
     expect(screen.getByText("Maya")).toBeInTheDocument();
     expect(screen.getByText("Maya copy")).toBeInTheDocument();
     expect(screen.queryByText("2468")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    expect(
+      await screen.findByText(
+        "Each child needs a unique saved identifier. Remove the duplicate child and add it again.",
+      ),
+    ).toBeInTheDocument();
+    expect(saveOnboardingDraft).not.toHaveBeenCalled();
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-label", "Onboarding step 3 of 7");
+  });
+
+  it("blocks an invalid child draft after resume rewind until the child is repaired", async () => {
+    const base = createDefaultDraftForReview();
+    const saveOnboardingDraft = vi.fn().mockResolvedValue(createDemoSeed());
+    render(
+      <OnboardingWizard
+        busy={false}
+        completeFamilySetup={vi.fn()}
+        error={null}
+        initialDraft={{
+          ...base,
+          childDrafts: [
+            {
+              ...base.childDrafts[0]!,
+              experienceMode: "invalid-mode" as "explorer",
+              pinRequested: false,
+            },
+          ],
+        }}
+        initialOnboarding={{
+          completedSteps: [
+            "adult",
+            "family",
+            "children",
+            "starter_goals",
+            "starter_rewards",
+            "notifications",
+          ],
+          currentStep: "review",
+          status: "in_progress",
+        }}
+        saveOnboardingDraft={saveOnboardingDraft}
+      />,
+    );
+
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-label", "Onboarding step 3 of 7");
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    expect(
+      await screen.findByText("Review each child name and experience before continuing."),
+    ).toBeInTheDocument();
+    expect(saveOnboardingDraft).not.toHaveBeenCalled();
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-label", "Onboarding step 3 of 7");
   });
 
   it.each([

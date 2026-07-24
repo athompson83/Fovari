@@ -369,6 +369,18 @@ export function OnboardingWizard({
     }
     if (
       activeStep === "children" &&
+      draft.childDrafts.some((child) => !OnboardingChildDraftSchema.safeParse(child).success)
+    ) {
+      return "Review each child name and experience before continuing.";
+    }
+    if (
+      activeStep === "children" &&
+      new Set(draft.childDrafts.map((child) => child.clientId)).size !== draft.childDrafts.length
+    ) {
+      return "Each child needs a unique saved identifier. Remove the duplicate child and add it again.";
+    }
+    if (
+      activeStep === "children" &&
       draft.childDrafts.some(
         (child) => child.pinRequested && !validPin(childPins[child.clientId] ?? ""),
       )
