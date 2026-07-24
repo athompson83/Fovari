@@ -3,6 +3,7 @@ import { useRouter } from "expo-router";
 import { LoadingState } from "../../../src/components/LoadingState";
 import { Screen } from "../../../src/components/Screen";
 import { ChildHome } from "../../../src/features/child/ChildHome";
+import { resolveAuthenticatedChild } from "../../../src/features/identity/authenticated-child";
 import { useFamilySnapshot } from "../../../src/hooks/use-family";
 
 export default function ChildHomeRoute() {
@@ -10,8 +11,7 @@ export default function ChildHomeRoute() {
   const snapshot = useFamilySnapshot();
   if (!snapshot) return <LoadingState />;
 
-  const child =
-    snapshot.children.find((item) => item.id === snapshot.activeChildId) ?? snapshot.children[0];
+  const child = resolveAuthenticatedChild(snapshot);
   if (!child) return <LoadingState />;
 
   const selectedReward = snapshot.rewards.find(

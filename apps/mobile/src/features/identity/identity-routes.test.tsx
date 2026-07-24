@@ -104,6 +104,24 @@ describe("child handoff routes", () => {
     );
   });
 
+  it("does not preserve an authenticated child session when the profile picker selects another child", async () => {
+    routeMocks.snapshot = {
+      ...createDemoSeed(),
+      activeActor: { childId: DEMO_IDS.alex, id: DEMO_IDS.alex, role: "child" },
+      session: { actorId: DEMO_IDS.alex, childId: DEMO_IDS.alex, kind: "child" },
+    };
+    routeMocks.repository.selectChild.mockResolvedValue({
+      ...routeMocks.snapshot,
+      activeChildId: DEMO_IDS.june,
+    });
+
+    render(<SelectProfileRoute />);
+    fireEvent.click(screen.getByRole("button", { name: "Choose June" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("sign out");
+    expect(routeMocks.push).not.toHaveBeenCalled();
+  });
+
   it("guards rapid profile choices and routes once with the persisted selection", async () => {
     let resolveSelection!: (snapshot: ReturnType<typeof createDemoSeed>) => void;
     routeMocks.repository.selectChild.mockReturnValue(

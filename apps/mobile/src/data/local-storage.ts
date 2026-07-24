@@ -533,7 +533,8 @@ function isSnapshot(value: unknown): value is FamilySnapshot {
     isString(session.childId) &&
     childIds.has(session.childId) &&
     session.actorId === actor.id &&
-    session.childId === actor.childId
+    session.childId === actor.childId &&
+    session.childId === value.activeChildId
   );
 }
 

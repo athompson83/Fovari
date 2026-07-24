@@ -6,6 +6,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createDemoSeed, DEMO_IDS } from "../data/fixtures";
+import ChildHomeRoute from "../../app/(child)/(tabs)/home";
 
 const routeMocks = vi.hoisted(() => ({
   back: vi.fn(),
@@ -52,6 +53,10 @@ describe("child goal detail route", () => {
   afterEach(cleanup);
 
   it("does not reveal a sibling goal when Maya requests that sibling occurrence ID", () => {
+    routeMocks.snapshot = {
+      ...routeMocks.snapshot!,
+      activeChildId: DEMO_IDS.june,
+    };
     render(<GoalDetailRoute />);
 
     expect(screen.getByText("Goal not found")).toBeInTheDocument();
@@ -60,5 +65,19 @@ describe("child goal detail route", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Back to goals" }));
     expect(routeMocks.replace).toHaveBeenCalledWith("/(child)/(tabs)/goals");
+  });
+
+  it("renders the authenticated session child on Home even when activeChildId points at a sibling", () => {
+    routeMocks.snapshot = {
+      ...routeMocks.snapshot!,
+      activeChildId: DEMO_IDS.june,
+    };
+
+    render(<ChildHomeRoute />);
+
+    expect(screen.getByText("Hi, Maya!")).toBeInTheDocument();
+    expect(screen.queryByText("Hi, June!")).not.toBeInTheDocument();
+    expect(screen.getByText("Read for 20 minutes")).toBeInTheDocument();
+    expect(screen.queryByText("Put toys away")).not.toBeInTheDocument();
   });
 });

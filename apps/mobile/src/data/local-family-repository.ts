@@ -1005,7 +1005,13 @@ export function createLocalFamilyRepository(
         if (!candidate.snapshot.children.some((child) => child.id === childId)) {
           throw new Error("Child profile was not found");
         }
-        candidate.snapshot = { ...candidate.snapshot, activeChildId: childId };
+        candidate.snapshot = {
+          ...candidate.snapshot,
+          activeChildId: childId,
+          ...(candidate.snapshot.session.kind === "child"
+            ? { session: { kind: "signed_out" as const } }
+            : {}),
+        };
       });
     },
 
@@ -1102,6 +1108,7 @@ export function createLocalFamilyRepository(
         candidate.snapshot = {
           ...candidate.snapshot,
           activeActor: copy(actor),
+          activeChildId: actor.role === "child" ? actor.childId! : candidate.snapshot.activeChildId,
           session:
             actor.role === "child"
               ? { actorId: actor.id, childId: actor.childId!, kind: "child" }

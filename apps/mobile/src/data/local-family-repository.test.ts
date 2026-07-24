@@ -568,6 +568,41 @@ describe("LocalFamilyRepository", () => {
     expect(adult.session.kind).toBe("adult");
   });
 
+  it.each([DEMO_IDS.alex, DEMO_IDS.june])(
+    "atomically signs out an authenticated child before selecting profile %s",
+    async (selectedChildId) => {
+      const { repository, storage } = createTestRepository();
+      const childSession = await repository.unlockChild({
+        childId: DEMO_IDS.alex,
+        now: 1_000,
+      });
+      expect(childSession.session.kind).toBe("child");
+
+      const selected = await repository.selectChild(selectedChildId);
+
+      expect(selected.activeChildId).toBe(selectedChildId);
+      expect(selected.session).toEqual({ kind: "signed_out" });
+
+      const persisted = await readLocalEnvelope(storage, createDemoSeed());
+      expect(persisted.snapshot.activeChildId).toBe(selectedChildId);
+      expect(persisted.snapshot.session).toEqual({ kind: "signed_out" });
+    },
+  );
+
+  it("keeps adult and signed-out profile previews unauthenticated as their selected child", async () => {
+    const { repository, storage } = createTestRepository();
+    const adultPreview = await repository.selectChild(DEMO_IDS.june);
+    expect(adultPreview.session.kind).toBe("adult");
+    expect(adultPreview.activeActor.id).toBe(DEMO_IDS.parent);
+
+    await repository.signOut();
+    const signedOutPreview = await repository.selectChild(DEMO_IDS.alex);
+    expect(signedOutPreview.session).toEqual({ kind: "signed_out" });
+    expect((await readLocalEnvelope(storage, createDemoSeed())).snapshot.session).toEqual({
+      kind: "signed_out",
+    });
+  });
+
   it("persists child PIN lockout state across repository hydration", async () => {
     const { pinVault, repository, storage } = await createCompletedFamilyWithPin("2468");
 

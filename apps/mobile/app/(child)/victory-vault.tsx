@@ -8,6 +8,7 @@ import { LoadingState } from "../../src/components/LoadingState";
 import { PageHeader } from "../../src/components/PageHeader";
 import { RouteGuard } from "../../src/components/RouteGuard";
 import { Screen } from "../../src/components/Screen";
+import { resolveAuthenticatedChild } from "../../src/features/identity/authenticated-child";
 import { useFamilySession, useFamilySnapshot } from "../../src/hooks/use-family";
 
 export default function VictoryVaultRoute() {
@@ -29,8 +30,7 @@ function VictoryVaultContent() {
   const router = useRouter();
   const snapshot = useFamilySnapshot();
   if (!snapshot) return <LoadingState />;
-  const child =
-    snapshot.children.find((item) => item.id === snapshot.activeChildId) ?? snapshot.children[0];
+  const child = resolveAuthenticatedChild(snapshot);
   if (!child) return <LoadingState />;
   const mode = getAgeModeTokens(child.experienceMode);
   const achievements = snapshot.achievements.filter((item) => item.childId === child.id);

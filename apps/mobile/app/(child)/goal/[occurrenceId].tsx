@@ -12,6 +12,7 @@ import { LoadingState } from "../../../src/components/LoadingState";
 import { PageHeader } from "../../../src/components/PageHeader";
 import { RouteGuard } from "../../../src/components/RouteGuard";
 import { Screen } from "../../../src/components/Screen";
+import { resolveAuthenticatedChild } from "../../../src/features/identity/authenticated-child";
 import {
   createLocalCommandId,
   useFamilyAction,
@@ -42,7 +43,7 @@ function GoalDetailContent() {
   const [note, setNote] = useState("");
   const [timerStarted, setTimerStarted] = useState(false);
   if (!snapshot) return <LoadingState />;
-  const child = snapshot.children.find((item) => item.id === snapshot.activeChildId);
+  const child = resolveAuthenticatedChild(snapshot);
   const goal = snapshot.goals.find(
     (item) => item.id === occurrenceId && item.childId === child?.id,
   );

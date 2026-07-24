@@ -6,13 +6,13 @@ import { Card } from "../../../src/components/Card";
 import { LoadingState } from "../../../src/components/LoadingState";
 import { PageHeader } from "../../../src/components/PageHeader";
 import { Screen } from "../../../src/components/Screen";
+import { resolveAuthenticatedChild } from "../../../src/features/identity/authenticated-child";
 import { useFamilySnapshot } from "../../../src/hooks/use-family";
 
 export default function ChildCalendarRoute() {
   const snapshot = useFamilySnapshot();
   if (!snapshot) return <LoadingState />;
-  const child =
-    snapshot.children.find((item) => item.id === snapshot.activeChildId) ?? snapshot.children[0];
+  const child = resolveAuthenticatedChild(snapshot);
   if (!child) return <LoadingState />;
   const mode = getAgeModeTokens(child.experienceMode);
   const items = snapshot.calendar.filter((item) => !item.childId || item.childId === child.id);

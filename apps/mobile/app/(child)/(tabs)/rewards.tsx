@@ -9,6 +9,7 @@ import { PageHeader } from "../../../src/components/PageHeader";
 import { ProgressBar } from "../../../src/components/ProgressBar";
 import { Screen } from "../../../src/components/Screen";
 import { SectionHeader } from "../../../src/components/SectionHeader";
+import { resolveAuthenticatedChild } from "../../../src/features/identity/authenticated-child";
 import {
   createLocalCommandId,
   useFamilyAction,
@@ -20,8 +21,7 @@ export default function ChildRewardsRoute() {
   const { busy, error, repository, run } = useFamilyAction();
   const { width } = useWindowDimensions();
   if (!snapshot) return <LoadingState />;
-  const child =
-    snapshot.children.find((item) => item.id === snapshot.activeChildId) ?? snapshot.children[0];
+  const child = resolveAuthenticatedChild(snapshot);
   if (!child) return <LoadingState />;
   const mode = getAgeModeTokens(child.experienceMode);
   const wide = width >= 740;

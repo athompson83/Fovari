@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createDemoSeed } from "./fixtures";
+import { createDemoSeed, DEMO_IDS } from "./fixtures";
 import * as localStorageModule from "./local-storage";
 import {
   createMemoryStorage,
@@ -324,6 +324,34 @@ describe("versioned local family storage", () => {
         seed,
       ),
     ).rejects.toThrow("Invalid local family data");
+  });
+
+  it("rejects child sessions whose authenticated child diverges from activeChildId on read and write", async () => {
+    const seed = createDemoSeed();
+    const initial = await readLocalEnvelope(createMemoryStorage(), seed);
+    const divergent = {
+      ...initial,
+      snapshot: {
+        ...seed,
+        activeActor: { childId: DEMO_IDS.alex, id: DEMO_IDS.alex, role: "child" as const },
+        activeChildId: DEMO_IDS.june,
+        session: {
+          actorId: DEMO_IDS.alex,
+          childId: DEMO_IDS.alex,
+          kind: "child" as const,
+        },
+      },
+    };
+
+    await expect(
+      readLocalEnvelope(
+        createMemoryStorage({ "fovari.local-family": JSON.stringify(divergent) }),
+        seed,
+      ),
+    ).rejects.toThrow("Invalid local family data");
+    await expect(writeLocalEnvelope(createMemoryStorage(), divergent)).rejects.toThrow(
+      "Invalid local family data",
+    );
   });
 
   it("rejects restart state that cannot be reconciled with the synthetic family", async () => {

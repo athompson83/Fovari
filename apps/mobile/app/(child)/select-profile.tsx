@@ -38,6 +38,9 @@ export default function SelectProfileRoute() {
         if (next.activeChildId !== childId) {
           throw new Error("The selected profile was not saved. Try again.");
         }
+        if (snapshot.session.kind === "child" && next.session.kind !== "signed_out") {
+          throw new Error("The previous child must sign out before another profile can unlock.");
+        }
         return next;
       });
       if (!mounted.current || requestGeneration.current !== generation) return;
