@@ -872,7 +872,7 @@ describe("LocalFamilyRepository", () => {
 
   it("surfaces an explicit inconsistent-demo error when multi-child compensation fails", async () => {
     const failures = createFailureStorage();
-    const { repository } = createRepositoryWithStorage(failures.storage);
+    const { pinVault, repository } = createRepositoryWithStorage(failures.storage);
     await repository.beginFamilySetup(
       { adultDisplayName: "Morgan" },
       createCommandContext({
@@ -930,6 +930,118 @@ describe("LocalFamilyRepository", () => {
       expect.objectContaining({ message: "second child vault write failed" }),
       expect.objectContaining({ message: "credential compensation failed" }),
     ]);
+
+    const downstreamContext = createCommandContext({
+      actorId: DEMO_IDS.parent,
+      familyId: DEMO_IDS.family,
+      idempotencyKey: "after-compensation-failure",
+    });
+    const downstreamReward = {
+      eligibleChildIds: [],
+      pointCost: 25,
+      title: "After compensation recovery",
+      type: "privilege" as const,
+    };
+    for (const message of [
+      "snapshot rollback still unavailable",
+      "actor rollback still unavailable",
+      "mutation rollback still unavailable",
+    ]) {
+      failures.failNext({
+        error: new Error(message),
+        key: "fovari.child-pin.90000000-0000-4000-8000-000000000001",
+        operation: "remove",
+      });
+    }
+
+    await expect(repository.getSnapshot()).rejects.toThrow("snapshot rollback still unavailable");
+    await expect(
+      repository.switchActor({ childId: DEMO_IDS.alex, id: DEMO_IDS.alex, role: "child" }),
+    ).rejects.toThrow("actor rollback still unavailable");
+    await expect(repository.createReward(downstreamReward, downstreamContext)).rejects.toThrow(
+      "mutation rollback still unavailable",
+    );
+
+    const recovered = await repository.getSnapshot();
+    const durable = await readLocalEnvelope(failures.storage, createDemoSeed());
+    expect(recovered.children).toEqual([]);
+    expect(recovered.session.kind).toBe("adult");
+    expect(await pinVault.listManagedChildIds()).toEqual([]);
+    expect(await pinVault.getPendingTransactionId()).toBeNull();
+    expect(durable.pendingCredentialTransactionId).toBeUndefined();
+    expect(durable.processedCommandIds).not.toContain("compensation-failure");
+    expect(durable.processedCommandIds).not.toContain(downstreamContext.idempotencyKey);
+    expect(durable.nextSequence).toBe(1);
+
+    const committed = await repository.createReward(downstreamReward, downstreamContext);
+    expect(committed.rewards.at(-1)?.id).toBe("90000000-0000-4000-8000-000000000001");
+  });
+
+  it("quarantines a committed credential candidate until final journal cleanup recovers", async () => {
+    const failures = createFailureStorage();
+    const { pinVault, repository } = createRepositoryWithStorage(failures.storage);
+    await repository.getSnapshot();
+    const configureContext = createCommandContext({
+      actorId: DEMO_IDS.parent,
+      familyId: DEMO_IDS.family,
+      idempotencyKey: "final-cleanup-configure",
+    });
+    failures.failNext({
+      error: new Error("final journal cleanup failed"),
+      key: "fovari.child-pin.pending-transaction",
+      operation: "remove",
+    });
+
+    await expect(
+      repository.configureChildPin({ childId: DEMO_IDS.alex, pin: "2468" }, configureContext),
+    ).rejects.toThrow("final journal cleanup failed");
+
+    const downstreamContext = createCommandContext({
+      actorId: DEMO_IDS.parent,
+      familyId: DEMO_IDS.family,
+      idempotencyKey: "after-final-cleanup-failure",
+    });
+    const downstreamReward = {
+      eligibleChildIds: [DEMO_IDS.alex],
+      pointCost: 25,
+      title: "After cleanup recovery",
+      type: "privilege" as const,
+    };
+    for (const message of [
+      "snapshot cleanup still unavailable",
+      "actor cleanup still unavailable",
+      "mutation cleanup still unavailable",
+    ]) {
+      failures.failNext({
+        error: new Error(message),
+        key: "fovari.child-pin.pending-transaction",
+        operation: "remove",
+      });
+    }
+
+    await expect(repository.getSnapshot()).rejects.toThrow("snapshot cleanup still unavailable");
+    await expect(
+      repository.switchActor({ childId: DEMO_IDS.alex, id: DEMO_IDS.alex, role: "child" }),
+    ).rejects.toThrow("actor cleanup still unavailable");
+    await expect(repository.createReward(downstreamReward, downstreamContext)).rejects.toThrow(
+      "mutation cleanup still unavailable",
+    );
+
+    const recovered = await repository.getSnapshot();
+    const durable = await readLocalEnvelope(failures.storage, createDemoSeed());
+    expect(recovered.children.find((child) => child.id === DEMO_IDS.alex)?.pinConfigured).toBe(
+      true,
+    );
+    expect(recovered.session.kind).toBe("adult");
+    expect(await pinVault.verify(DEMO_IDS.alex, "2468")).toBe(true);
+    expect(await pinVault.getPendingTransactionId()).toBeNull();
+    expect(durable.pendingCredentialTransactionId).toBeUndefined();
+    expect(durable.processedCommandIds).toContain(configureContext.idempotencyKey);
+    expect(durable.processedCommandIds).not.toContain(downstreamContext.idempotencyKey);
+    expect(durable.nextSequence).toBe(1);
+
+    const committed = await repository.createReward(downstreamReward, downstreamContext);
+    expect(committed.rewards.at(-1)?.id).toBe("90000000-0000-4000-8000-000000000001");
   });
 
   it("serializes concurrent mutations in call order and restores their exact final state", async () => {

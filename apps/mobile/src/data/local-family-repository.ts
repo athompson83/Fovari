@@ -306,6 +306,11 @@ export function createLocalFamilyRepository(
       { cause },
     );
 
+  const quarantineCredentialTransaction = (error: unknown): never => {
+    reconciliationRequired = true;
+    throw error;
+  };
+
   const runCredentialTransaction = async (
     candidate: LocalFamilyEnvelopeV1,
     credentialIds: readonly string[],
@@ -313,7 +318,13 @@ export function createLocalFamilyRepository(
     mutateVault: () => Promise<void>,
   ): Promise<FamilySnapshot> => {
     const prior = copy(current());
-    const transactionId = await options.pinVault.beginTransaction(credentialIds);
+    const transaction = await options.pinVault.beginTransaction(credentialIds).then(
+      (transactionId) => ({ ok: true as const, transactionId }),
+      (error: unknown) => ({ error, ok: false as const }),
+    );
+    const transactionId = transaction.ok
+      ? transaction.transactionId
+      : quarantineCredentialTransaction(transaction.error);
     const marked: LocalFamilyEnvelopeV1 = {
       ...copy(prior),
       pendingCredentialTransactionId: transactionId,
@@ -328,7 +339,9 @@ export function createLocalFamilyRepository(
         (error: unknown) => ({ error, ok: false as const }),
       );
       if (!cleanup.ok) {
-        throw credentialTransactionError(operation, cause, cleanup.error);
+        quarantineCredentialTransaction(
+          credentialTransactionError(operation, cause, cleanup.error),
+        );
       }
       throw cause;
     }
@@ -343,26 +356,36 @@ export function createLocalFamilyRepository(
         (error: unknown) => ({ error, ok: false as const }),
       );
       if (!rollback.ok) {
-        throw credentialTransactionError(operation, cause, rollback.error);
+        quarantineCredentialTransaction(
+          credentialTransactionError(operation, cause, rollback.error),
+        );
       }
       const envelopeRollback = await commit(prior, marked).then(
         () => ({ ok: true as const }),
         (error: unknown) => ({ error, ok: false as const }),
       );
       if (!envelopeRollback.ok) {
-        throw credentialTransactionError(operation, cause, envelopeRollback.error);
+        quarantineCredentialTransaction(
+          credentialTransactionError(operation, cause, envelopeRollback.error),
+        );
       }
       const cleanup = await options.pinVault.finalizeTransaction(transactionId).then(
         () => ({ ok: true as const }),
         (error: unknown) => ({ error, ok: false as const }),
       );
       if (!cleanup.ok) {
-        throw credentialTransactionError(operation, cause, cleanup.error);
+        quarantineCredentialTransaction(
+          credentialTransactionError(operation, cause, cleanup.error),
+        );
       }
       throw cause;
     }
 
-    await options.pinVault.finalizeTransaction(transactionId);
+    const cleanup = await options.pinVault.finalizeTransaction(transactionId).then(
+      () => ({ ok: true as const }),
+      (error: unknown) => ({ error, ok: false as const }),
+    );
+    if (!cleanup.ok) quarantineCredentialTransaction(cleanup.error);
     return copy(candidate.snapshot);
   };
 
