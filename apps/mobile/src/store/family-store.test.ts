@@ -8,10 +8,17 @@ import { createFamilyStore } from "./family-store";
 const createTestRepository = () =>
   createLocalFamilyRepository({
     pinVault: {
+      async checkpoint() {
+        return { kind: "opaque-child-pin-vault-checkpoint" };
+      },
       async isConfigured() {
         return false;
       },
+      async listManagedChildIds() {
+        return [];
+      },
       async remove() {},
+      async restore() {},
       async set() {},
       async verify() {
         return false;

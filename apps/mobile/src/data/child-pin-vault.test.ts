@@ -35,10 +35,55 @@ const opaqueDigest = async (value: string) =>
 describe("child PIN vault", () => {
   it("exposes a configured vault factory without an eager singleton", () => {
     expect(createConfiguredChildPinVault()).toMatchObject({
+      checkpoint: expect.any(Function),
       isConfigured: expect.any(Function),
+      listManagedChildIds: expect.any(Function),
       remove: expect.any(Function),
+      restore: expect.any(Function),
       set: expect.any(Function),
       verify: expect.any(Function),
+    });
+  });
+
+  it("tracks managed credentials and restores an overwritten opaque credential", async () => {
+    const storage = createMemoryStorage();
+    let salt = 0;
+    const vault = createChildPinVault({
+      digest: opaqueDigest,
+      randomId: () => `salt-${++salt}`,
+      storage,
+    });
+
+    await vault.set("child-restore", "2468");
+    const checkpoint = await vault.checkpoint(["child-restore"]);
+    await vault.set("child-restore", "1357");
+
+    expect(await vault.verify("child-restore", "1357")).toBe(true);
+    await vault.restore(checkpoint);
+
+    expect(await vault.verify("child-restore", "2468")).toBe(true);
+    expect(await vault.verify("child-restore", "1357")).toBe(false);
+    expect(await vault.listManagedChildIds()).toEqual(["child-restore"]);
+    expect(JSON.stringify(checkpoint)).not.toContain("2468");
+  });
+
+  it("removes a child from the versioned managed credential registry", async () => {
+    const storage = createMemoryStorage();
+    const vault = createChildPinVault({
+      digest: opaqueDigest,
+      randomId: () => "registry-salt",
+      storage,
+    });
+
+    await vault.set("child-managed", "2468");
+    expect(await vault.listManagedChildIds()).toEqual(["child-managed"]);
+
+    await vault.remove("child-managed");
+
+    expect(await vault.listManagedChildIds()).toEqual([]);
+    expect(JSON.parse((await storage.getItem("fovari.child-pin.registry")) ?? "null")).toEqual({
+      childIds: [],
+      version: 1,
     });
   });
 

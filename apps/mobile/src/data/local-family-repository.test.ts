@@ -21,12 +21,94 @@ import { createCommandContext } from "@fovari/api-client";
 import { createChildPinVault } from "./child-pin-vault";
 import { DEMO_IDS, createDemoSeed } from "./fixtures";
 import { createLocalFamilyRepository } from "./local-family-repository";
-import { createMemoryStorage } from "./local-storage";
+import {
+  createMemoryStorage,
+  readLocalEnvelope,
+  type KeyValueStorage,
+  writeLocalEnvelope,
+} from "./local-storage";
 
 const testDigest = async (value: string) =>
   `sha256-${Array.from(value)
     .reduce((hash, character) => (hash * 31 + character.charCodeAt(0)) >>> 0, 7)
     .toString(16)}`;
+
+interface StorageFailureRule {
+  after?: boolean;
+  error: Error;
+  key: string;
+  operation: "remove" | "set";
+}
+
+const createFailureStorage = () => {
+  const base = createMemoryStorage();
+  const failures: StorageFailureRule[] = [];
+  const takeFailure = (operation: StorageFailureRule["operation"], key: string) => {
+    const index = failures.findIndex(
+      (failure) => failure.operation === operation && failure.key === key,
+    );
+    if (index < 0) return undefined;
+    return failures.splice(index, 1)[0];
+  };
+  const storage: KeyValueStorage = {
+    getItem: base.getItem,
+    async removeItem(key) {
+      const failure = takeFailure("remove", key);
+      if (!failure?.after && failure) throw failure.error;
+      await base.removeItem(key);
+      if (failure) throw failure.error;
+    },
+    async setItem(key, value) {
+      const failure = takeFailure("set", key);
+      if (!failure?.after && failure) throw failure.error;
+      await base.setItem(key, value);
+      if (failure) throw failure.error;
+    },
+  };
+  return {
+    failNext(failure: StorageFailureRule) {
+      failures.push(failure);
+    },
+    storage,
+  };
+};
+
+const createSetupDraft = (
+  overrides: Partial<{
+    childDrafts: {
+      clientId: string;
+      displayName: string;
+      experienceMode: "adventurer" | "explorer" | "independence" | "launch";
+      pinRequested: boolean;
+    }[];
+    selectedStarterGoalIds: string[];
+    selectedStarterRewardIds: string[];
+  }> = {},
+) => ({
+  adultDisplayName: "Morgan",
+  childDrafts: [
+    {
+      clientId: "draft-maya",
+      displayName: "Maya",
+      experienceMode: "explorer" as const,
+      pinRequested: true,
+    },
+  ],
+  familyName: "The Park Family",
+  notificationPreferences: {
+    approvalUpdates: true,
+    childEncouragement: true,
+    enabled: true,
+    quietHoursEnd: "07:00",
+    quietHoursStart: "20:30",
+    weeklySummary: true,
+  },
+  pointsName: "Stars",
+  selectedStarterGoalIds: ["starter-reading"],
+  selectedStarterRewardIds: ["starter-movie"],
+  timezone: "America/New_York",
+  ...overrides,
+});
 
 const createTestRepository = (seed = createDemoSeed()) => {
   const storage = createMemoryStorage();
@@ -40,6 +122,26 @@ const createTestRepository = (seed = createDemoSeed()) => {
     repository: createLocalFamilyRepository({
       pinVault,
       seed,
+      storage,
+    }),
+    storage,
+  };
+};
+
+const createRepositoryWithStorage = (
+  storage: KeyValueStorage,
+  randomId: () => string = () => "test-salt",
+) => {
+  const pinVault = createChildPinVault({
+    digest: testDigest,
+    randomId,
+    storage,
+  });
+  return {
+    pinVault,
+    repository: createLocalFamilyRepository({
+      pinVault,
+      seed: createDemoSeed(),
       storage,
     }),
     storage,
@@ -150,6 +252,112 @@ describe("LocalFamilyRepository", () => {
     expect((await restored.getSnapshot()).familyName).toBe("The Park Family");
   });
 
+  it.each([
+    {
+      childPins: { "draft-maya": "2468", unknown: "1357" },
+      draft: createSetupDraft(),
+      expected: "Unknown child PIN",
+      label: "unknown client IDs",
+    },
+    {
+      childPins: {},
+      draft: createSetupDraft(),
+      expected: "PIN is required",
+      label: "missing requested PINs",
+    },
+    {
+      childPins: { "draft-maya": "2468" },
+      draft: createSetupDraft({
+        childDrafts: [
+          {
+            clientId: "draft-maya",
+            displayName: "Maya",
+            experienceMode: "explorer",
+            pinRequested: false,
+          },
+        ],
+      }),
+      expected: "PIN was not requested",
+      label: "PINs for unrequested profiles",
+    },
+  ])("rejects $label before setup effects", async ({ childPins, draft, expected }) => {
+    const { repository } = createTestRepository();
+    await repository.beginFamilySetup(
+      { adultDisplayName: "Morgan" },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: `begin-${draft.childDrafts[0]!.pinRequested}-${expected}`,
+      }),
+    );
+
+    await expect(
+      repository.completeFamilySetup(
+        { childPins, draft },
+        createCommandContext({
+          actorId: DEMO_IDS.parent,
+          familyId: DEMO_IDS.family,
+          idempotencyKey: `complete-${expected}`,
+        }),
+      ),
+    ).rejects.toThrow(expected);
+  });
+
+  it("validates every child PIN before IDs or vault writes and preserves retry sequence", async () => {
+    const randomId = vi.fn(() => "test-salt");
+    const storage = createMemoryStorage();
+    const { repository } = createRepositoryWithStorage(storage, randomId);
+    await repository.beginFamilySetup(
+      { adultDisplayName: "Morgan" },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "begin-invalid-later-pin",
+      }),
+    );
+    const draft = createSetupDraft({
+      childDrafts: [
+        {
+          clientId: "draft-maya",
+          displayName: "Maya",
+          experienceMode: "explorer",
+          pinRequested: true,
+        },
+        {
+          clientId: "draft-june",
+          displayName: "June",
+          experienceMode: "adventurer",
+          pinRequested: true,
+        },
+      ],
+    });
+
+    await expect(
+      repository.completeFamilySetup(
+        { childPins: { "draft-june": "12", "draft-maya": "2468" }, draft },
+        createCommandContext({
+          actorId: DEMO_IDS.parent,
+          familyId: DEMO_IDS.family,
+          idempotencyKey: "invalid-later-pin",
+        }),
+      ),
+    ).rejects.toThrow("4 to 6 digit PIN");
+    expect(randomId).not.toHaveBeenCalled();
+
+    const completed = await repository.completeFamilySetup(
+      { childPins: { "draft-june": "1357", "draft-maya": "2468" }, draft },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "valid-pin-retry",
+      }),
+    );
+    expect(completed.children.map((child) => child.id)).toEqual([
+      "90000000-0000-4000-8000-000000000001",
+      "90000000-0000-4000-8000-000000000002",
+    ]);
+  });
+
   it("rejects unknown starter content without consuming the persisted ID sequence", async () => {
     const { pinVault, repository } = createTestRepository();
     await repository.beginFamilySetup(
@@ -211,7 +419,7 @@ describe("LocalFamilyRepository", () => {
     expect(completed.children[0]?.id).toBe("90000000-0000-4000-8000-000000000001");
   });
 
-  it("keeps the existing create-child command valid during a persisted setup", async () => {
+  it("keeps the existing create-child command valid after naming a persisted setup", async () => {
     const { pinVault, repository, storage } = createTestRepository();
     await repository.beginFamilySetup(
       { adultDisplayName: "Morgan" },
@@ -219,6 +427,18 @@ describe("LocalFamilyRepository", () => {
         actorId: DEMO_IDS.parent,
         familyId: DEMO_IDS.family,
         idempotencyKey: "begin-create-child-test",
+      }),
+    );
+    await repository.createFamily(
+      {
+        name: "The Park Family",
+        pointsName: "Stars",
+        timezone: "America/New_York",
+      },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "name-family-before-child",
       }),
     );
 
@@ -333,6 +553,444 @@ describe("LocalFamilyRepository", () => {
 
     expect(reset).toEqual(createDemoSeed());
     expect(await pinVault.isConfigured(DEMO_IDS.alex)).toBe(false);
+  });
+
+  it("restores an overwritten PIN when the envelope commit fails", async () => {
+    const failures = createFailureStorage();
+    const { pinVault, repository } = createRepositoryWithStorage(failures.storage);
+    await repository.configureChildPin(
+      { childId: DEMO_IDS.alex, pin: "2468" },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "configure-original-pin",
+      }),
+    );
+    failures.failNext({
+      error: new Error("envelope write failed"),
+      key: "fovari.local-family",
+      operation: "set",
+    });
+
+    await expect(
+      repository.configureChildPin(
+        { childId: DEMO_IDS.alex, pin: "1357" },
+        createCommandContext({
+          actorId: DEMO_IDS.parent,
+          familyId: DEMO_IDS.family,
+          idempotencyKey: "replace-pin",
+        }),
+      ),
+    ).rejects.toThrow("envelope write failed");
+    expect(await pinVault.verify(DEMO_IDS.alex, "2468")).toBe(true);
+    expect(await pinVault.verify(DEMO_IDS.alex, "1357")).toBe(false);
+
+    await repository.configureChildPin(
+      { childId: DEMO_IDS.alex, pin: "1357" },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "replace-pin",
+      }),
+    );
+    expect(await pinVault.verify(DEMO_IDS.alex, "1357")).toBe(true);
+  });
+
+  it("cleans managed credentials when beginning a replacement setup", async () => {
+    const { pinVault, repository } = await createCompletedFamilyWithPin("2468");
+
+    await repository.beginFamilySetup(
+      { adultDisplayName: "Morgan" },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "begin-replacement",
+      }),
+    );
+
+    expect(await pinVault.isConfigured(DEMO_IDS.alex)).toBe(false);
+    expect(await pinVault.listManagedChildIds()).toEqual([]);
+  });
+
+  it("restores managed credentials when begin replacement persistence fails", async () => {
+    const failures = createFailureStorage();
+    const { pinVault, repository } = createRepositoryWithStorage(failures.storage);
+    await repository.configureChildPin(
+      { childId: DEMO_IDS.alex, pin: "2468" },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "configure-before-begin-failure",
+      }),
+    );
+    failures.failNext({
+      error: new Error("begin envelope write failed"),
+      key: "fovari.local-family",
+      operation: "set",
+    });
+
+    await expect(
+      repository.beginFamilySetup(
+        { adultDisplayName: "Morgan" },
+        createCommandContext({
+          actorId: DEMO_IDS.parent,
+          familyId: DEMO_IDS.family,
+          idempotencyKey: "begin-replacement-failure",
+        }),
+      ),
+    ).rejects.toThrow("begin envelope write failed");
+    expect(await pinVault.verify(DEMO_IDS.alex, "2468")).toBe(true);
+  });
+
+  it("restores managed credentials when reset persistence fails", async () => {
+    const failures = createFailureStorage();
+    const { pinVault, repository } = createRepositoryWithStorage(failures.storage);
+    await repository.configureChildPin(
+      { childId: DEMO_IDS.alex, pin: "2468" },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "configure-before-reset-failure",
+      }),
+    );
+    failures.failNext({
+      error: new Error("reset envelope write failed"),
+      key: "fovari.local-family",
+      operation: "set",
+    });
+
+    await expect(
+      repository.resetDemo(
+        createCommandContext({
+          actorId: DEMO_IDS.parent,
+          familyId: DEMO_IDS.family,
+          idempotencyKey: "reset-failure",
+        }),
+      ),
+    ).rejects.toThrow("reset envelope write failed");
+    expect(await pinVault.verify(DEMO_IDS.alex, "2468")).toBe(true);
+  });
+
+  it("cleans registry-owned orphan credentials during reset", async () => {
+    const storage = createMemoryStorage();
+    const { pinVault, repository } = createRepositoryWithStorage(storage);
+    await repository.configureChildPin(
+      { childId: DEMO_IDS.alex, pin: "2468" },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "configure-orphan",
+      }),
+    );
+    const envelope = await readLocalEnvelope(storage, createDemoSeed());
+    await writeLocalEnvelope(storage, {
+      ...envelope,
+      offlineActions: [],
+      pinAttempts: {},
+      snapshot: {
+        ...envelope.snapshot,
+        achievements: [],
+        activeActor: { id: DEMO_IDS.parent, role: "family_owner" },
+        activeChildId: "",
+        calendar: [],
+        children: [],
+        completions: [],
+        familyName: "",
+        goals: [],
+        ledger: [],
+        onboarding: {
+          completedSteps: [],
+          currentStep: "adult",
+          status: "not_started",
+        },
+        redemptions: [],
+        rewards: [],
+        selectedRewardByChild: {},
+        session: { actorId: DEMO_IDS.parent, kind: "adult" },
+      },
+    });
+    const restored = createLocalFamilyRepository({
+      pinVault,
+      seed: createDemoSeed(),
+      storage,
+    });
+
+    await restored.resetDemo(
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "reset-orphan",
+      }),
+    );
+
+    expect(await pinVault.isConfigured(DEMO_IDS.alex)).toBe(false);
+    expect(await pinVault.listManagedChildIds()).toEqual([]);
+  });
+
+  it("cleans replaced credentials when completing setup without a prior begin", async () => {
+    const { pinVault, repository } = await createCompletedFamilyWithPin("2468");
+
+    const completed = await repository.completeFamilySetup(
+      {
+        childPins: { "draft-maya": "1357" },
+        draft: createSetupDraft(),
+      },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "complete-replacement",
+      }),
+    );
+
+    expect(await pinVault.isConfigured(DEMO_IDS.alex)).toBe(false);
+    expect(await pinVault.verify(completed.children[0]!.id, "1357")).toBe(true);
+    expect(await pinVault.listManagedChildIds()).toEqual([completed.children[0]!.id]);
+  });
+
+  it("restores replaced credentials when complete setup persistence fails", async () => {
+    const failures = createFailureStorage();
+    const { pinVault, repository } = createRepositoryWithStorage(failures.storage);
+    await repository.configureChildPin(
+      { childId: DEMO_IDS.alex, pin: "2468" },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "configure-before-complete-failure",
+      }),
+    );
+    failures.failNext({
+      error: new Error("complete envelope write failed"),
+      key: "fovari.local-family",
+      operation: "set",
+    });
+
+    await expect(
+      repository.completeFamilySetup(
+        {
+          childPins: { "draft-maya": "1357" },
+          draft: createSetupDraft(),
+        },
+        createCommandContext({
+          actorId: DEMO_IDS.parent,
+          familyId: DEMO_IDS.family,
+          idempotencyKey: "complete-replacement-failure",
+        }),
+      ),
+    ).rejects.toThrow("complete envelope write failed");
+    expect(await pinVault.verify(DEMO_IDS.alex, "2468")).toBe(true);
+    expect(await pinVault.isConfigured("90000000-0000-4000-8000-000000000001")).toBe(false);
+  });
+
+  it("rolls back a partial multi-child vault write without consuming sequence", async () => {
+    const failures = createFailureStorage();
+    const { pinVault, repository } = createRepositoryWithStorage(failures.storage);
+    await repository.beginFamilySetup(
+      { adultDisplayName: "Morgan" },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "begin-partial-vault",
+      }),
+    );
+    const draft = createSetupDraft({
+      childDrafts: [
+        {
+          clientId: "draft-maya",
+          displayName: "Maya",
+          experienceMode: "explorer",
+          pinRequested: true,
+        },
+        {
+          clientId: "draft-june",
+          displayName: "June",
+          experienceMode: "adventurer",
+          pinRequested: true,
+        },
+      ],
+    });
+    failures.failNext({
+      error: new Error("second child vault write failed"),
+      key: "fovari.child-pin.90000000-0000-4000-8000-000000000002",
+      operation: "set",
+    });
+
+    await expect(
+      repository.completeFamilySetup(
+        { childPins: { "draft-june": "1357", "draft-maya": "2468" }, draft },
+        createCommandContext({
+          actorId: DEMO_IDS.parent,
+          familyId: DEMO_IDS.family,
+          idempotencyKey: "partial-vault-failure",
+        }),
+      ),
+    ).rejects.toThrow("second child vault write failed");
+    expect(await pinVault.listManagedChildIds()).toEqual([]);
+
+    const completed = await repository.completeFamilySetup(
+      { childPins: { "draft-june": "1357", "draft-maya": "2468" }, draft },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "partial-vault-failure",
+      }),
+    );
+    expect(completed.children.map((child) => child.id)).toEqual([
+      "90000000-0000-4000-8000-000000000001",
+      "90000000-0000-4000-8000-000000000002",
+    ]);
+  });
+
+  it("surfaces an explicit inconsistent-demo error when multi-child compensation fails", async () => {
+    const failures = createFailureStorage();
+    const { repository } = createRepositoryWithStorage(failures.storage);
+    await repository.beginFamilySetup(
+      { adultDisplayName: "Morgan" },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "begin-compensation-failure",
+      }),
+    );
+    const draft = createSetupDraft({
+      childDrafts: [
+        {
+          clientId: "draft-maya",
+          displayName: "Maya",
+          experienceMode: "explorer",
+          pinRequested: true,
+        },
+        {
+          clientId: "draft-june",
+          displayName: "June",
+          experienceMode: "adventurer",
+          pinRequested: true,
+        },
+      ],
+    });
+    failures.failNext({
+      error: new Error("second child vault write failed"),
+      key: "fovari.child-pin.90000000-0000-4000-8000-000000000002",
+      operation: "set",
+    });
+    failures.failNext({
+      error: new Error("credential compensation failed"),
+      key: "fovari.child-pin.90000000-0000-4000-8000-000000000001",
+      operation: "remove",
+    });
+
+    const failure = await repository
+      .completeFamilySetup(
+        { childPins: { "draft-june": "1357", "draft-maya": "2468" }, draft },
+        createCommandContext({
+          actorId: DEMO_IDS.parent,
+          familyId: DEMO_IDS.family,
+          idempotencyKey: "compensation-failure",
+        }),
+      )
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).message).toContain(
+      "Inconsistent local demo credential state",
+    );
+    expect((failure as AggregateError).cause).toEqual(
+      expect.objectContaining({ message: "second child vault write failed" }),
+    );
+    expect((failure as AggregateError).errors).toEqual([
+      expect.objectContaining({ message: "second child vault write failed" }),
+      expect.objectContaining({ message: "credential compensation failed" }),
+    ]);
+  });
+
+  it("serializes concurrent mutations in call order and restores their exact final state", async () => {
+    const { pinVault, repository, storage } = createTestRepository();
+    const [first, second] = await Promise.all([
+      repository.createReward(
+        {
+          eligibleChildIds: [DEMO_IDS.alex],
+          pointCost: 25,
+          title: "First concurrent reward",
+          type: "privilege",
+        },
+        createCommandContext({
+          actorId: DEMO_IDS.parent,
+          familyId: DEMO_IDS.family,
+          idempotencyKey: "concurrent-reward-first",
+        }),
+      ),
+      repository.createReward(
+        {
+          eligibleChildIds: [DEMO_IDS.alex],
+          pointCost: 30,
+          title: "Second concurrent reward",
+          type: "experience",
+        },
+        createCommandContext({
+          actorId: DEMO_IDS.parent,
+          familyId: DEMO_IDS.family,
+          idempotencyKey: "concurrent-reward-second",
+        }),
+      ),
+    ]);
+
+    expect(first.rewards.at(-1)?.id).toBe("90000000-0000-4000-8000-000000000001");
+    expect(second.rewards.slice(-2).map((reward) => reward.id)).toEqual([
+      "90000000-0000-4000-8000-000000000001",
+      "90000000-0000-4000-8000-000000000002",
+    ]);
+
+    const restored = createLocalFamilyRepository({
+      pinVault,
+      seed: createDemoSeed(),
+      storage,
+    });
+    expect((await restored.getSnapshot()).rewards.slice(-2).map((reward) => reward.title)).toEqual([
+      "First concurrent reward",
+      "Second concurrent reward",
+    ]);
+  });
+
+  it("retries a failed mutation with the same command key and unconsumed sequence", async () => {
+    const failures = createFailureStorage();
+    const { pinVault, repository } = createRepositoryWithStorage(failures.storage);
+    const input = {
+      eligibleChildIds: [DEMO_IDS.alex],
+      pointCost: 25,
+      title: "Retry reward",
+      type: "privilege" as const,
+    };
+    const context = createCommandContext({
+      actorId: DEMO_IDS.parent,
+      familyId: DEMO_IDS.family,
+      idempotencyKey: "retry-reward",
+    });
+    failures.failNext({
+      error: new Error("retry envelope write failed"),
+      key: "fovari.local-family",
+      operation: "set",
+    });
+
+    await expect(repository.createReward(input, context)).rejects.toThrow(
+      "retry envelope write failed",
+    );
+    const retried = await repository.createReward(input, context);
+    expect(retried.rewards.at(-1)?.id).toBe("90000000-0000-4000-8000-000000000001");
+
+    const restored = createLocalFamilyRepository({
+      pinVault,
+      seed: createDemoSeed(),
+      storage: failures.storage,
+    });
+    await expect(restored.createReward(input, context)).rejects.toThrow("already processed");
+    const next = await restored.createReward(
+      { ...input, title: "Next reward" },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "next-reward",
+      }),
+    );
+    expect(next.rewards.at(-1)?.id).toBe("90000000-0000-4000-8000-000000000002");
   });
 
   it("submits and approves a completion with exactly one immutable point credit", async () => {

@@ -240,6 +240,26 @@ describe("versioned local family storage", () => {
     expect((await readLocalEnvelope(storage, createDemoSeed())).snapshot.children).toEqual([]);
   });
 
+  it("rejects an empty family name once a transitional snapshot has children", async () => {
+    const storage = createMemoryStorage();
+    const initial = await readLocalEnvelope(storage, createDemoSeed());
+    const invalid = {
+      ...initial,
+      snapshot: {
+        ...initial.snapshot,
+        familyName: "",
+        onboarding: {
+          completedSteps: ["adult"] as const,
+          currentStep: "family" as const,
+          status: "in_progress" as const,
+        },
+      },
+    };
+
+    await expect(writeLocalEnvelope(storage, invalid)).rejects.toThrow("Invalid local family data");
+    expect(await storage.getItem("fovari.local-family")).toBeNull();
+  });
+
   it("does not write a syntactically valid envelope beyond the local size limit", async () => {
     const storage = createMemoryStorage();
     const initial = await readLocalEnvelope(storage, createDemoSeed());

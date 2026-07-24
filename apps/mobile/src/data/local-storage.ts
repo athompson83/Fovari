@@ -323,6 +323,7 @@ function isSnapshot(value: unknown): value is FamilySnapshot {
     !onboarding.completedSteps.every((step) => onboardingSteps.has(step as string)) ||
     !onboardingCurrentSteps.has(onboarding.currentStep as string) ||
     !onboardingStatuses.has(onboarding.status as string) ||
+    ((value.familyName as string).length === 0 && childIds.size > 0) ||
     (onboarding.status === "complete" &&
       ((value.familyName as string).length === 0 || childIds.size === 0)) ||
     (value.onboardingDraft !== null && !isOnboardingDraft(value.onboardingDraft))

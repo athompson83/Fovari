@@ -44,7 +44,7 @@ import {
   type SubmitCompletionInput,
 } from "@fovari/validation";
 
-import type { ChildPinVault } from "./child-pin-vault";
+import type { ChildPinVault, ChildPinVaultCheckpoint } from "./child-pin-vault";
 import { createDemoSeed } from "./fixtures";
 import {
   type KeyValueStorage,
@@ -126,6 +126,34 @@ const sanitizeOnboardingDraft = (draft: OnboardingDraft): OnboardingDraft => {
   };
 };
 
+const parseRequestedChildPins = (
+  draft: OnboardingDraft,
+  childPins: Readonly<Record<string, string>>,
+): Readonly<Record<string, string>> => {
+  const knownClientIds = new Set(draft.childDrafts.map((child) => child.clientId));
+  const unknownClientId = Object.keys(childPins).find((clientId) => !knownClientIds.has(clientId));
+  if (unknownClientId) {
+    throw new Error(`Unknown child PIN client ID: ${unknownClientId}`);
+  }
+
+  const parsedPins: Record<string, string> = {};
+  for (const child of draft.childDrafts) {
+    const hasPin = Object.prototype.hasOwnProperty.call(childPins, child.clientId);
+    if (!child.pinRequested && hasPin) {
+      throw new Error(`A PIN was not requested for ${child.clientId}`);
+    }
+    if (child.pinRequested && !hasPin) {
+      throw new Error(`A PIN is required for ${child.clientId}`);
+    }
+    if (hasPin) {
+      parsedPins[child.clientId] = ConfigureChildPinSchema.shape.pin.parse(
+        childPins[child.clientId],
+      );
+    }
+  }
+  return parsedPins;
+};
+
 const createCompletedOnboardingState = () => {
   let onboarding = createOnboardingState();
   for (const step of ONBOARDING_STEPS) {
@@ -159,6 +187,32 @@ export function createLocalFamilyRepository(
     await writeLocalEnvelope(options.storage, candidate);
     envelope = candidate;
   };
+
+  const restoreVaultOrThrow = async (
+    operation: string,
+    cause: unknown,
+    checkpoint: ChildPinVaultCheckpoint,
+  ): Promise<never> => {
+    const compensation = await options.pinVault.restore(checkpoint).then(
+      () => ({ ok: true as const }),
+      (error: unknown) => ({ error, ok: false as const }),
+    );
+    if (!compensation.ok) {
+      throw new AggregateError(
+        [cause, compensation.error],
+        `Inconsistent local demo credential state after failed ${operation}.`,
+        { cause },
+      );
+    }
+    throw cause;
+  };
+
+  const managedCredentialIds = async (candidate: LocalFamilyEnvelopeV1) => [
+    ...new Set([
+      ...candidate.snapshot.children.map((child) => child.id),
+      ...(await options.pinVault.listManagedChildIds()),
+    ]),
+  ];
 
   const serialize = <T>(operation: () => Promise<T>): Promise<T> => {
     const result = mutationTail.then(operation, operation);
@@ -316,13 +370,17 @@ export function createLocalFamilyRepository(
     },
 
     async beginFamilySetup(input: BeginFamilySetupInput, context: CommandContext) {
-      return mutate((candidate) => {
+      return serialize(async () => {
+        await ensureHydrated();
+        const candidate = copy(current());
         commandMatches(context, candidate.snapshot.familyId, context.idempotencyKey);
         requireAdultPermission(candidate, context, "manage_privacy");
         rejectDuplicate(candidate, context.idempotencyKey);
         const adultDisplayName = input.adultDisplayName.trim();
         if (!adultDisplayName) throw new Error("Adult display name is required");
 
+        const credentialIds = await managedCredentialIds(candidate);
+        const checkpoint = await options.pinVault.checkpoint(credentialIds);
         candidate.offlineActions = [];
         candidate.pinAttempts = {};
         candidate.snapshot = {
@@ -333,6 +391,15 @@ export function createLocalFamilyRepository(
           session: { actorId: context.actorId, kind: "adult" },
         };
         markProcessed(candidate, context.idempotencyKey);
+        try {
+          for (const childId of credentialIds) {
+            await options.pinVault.remove(childId);
+          }
+          await commit(candidate);
+          return copy(candidate.snapshot);
+        } catch (cause) {
+          return restoreVaultOrThrow("family setup replacement", cause, checkpoint);
+        }
       });
     },
 
@@ -357,6 +424,7 @@ export function createLocalFamilyRepository(
         if (new Set(clientIds).size !== clientIds.length) {
           throw new Error("Child draft identifiers must be unique");
         }
+        const parsedChildPins = parseRequestedChildPins(draft, input.childPins);
 
         const unknownStarterGoalId = draft.selectedStarterGoalIds.find(
           (id) => !STARTER_GOALS.some((goal) => goal.id === id),
@@ -381,7 +449,7 @@ export function createLocalFamilyRepository(
           id: nextId(candidate),
           level: 1,
           name: childDraft.displayName,
-          pinConfigured: Boolean(input.childPins[childDraft.clientId]),
+          pinConfigured: Object.prototype.hasOwnProperty.call(parsedChildPins, childDraft.clientId),
           points: 0,
           streakDays: 0,
           totalToday: selectedGoalDefinitions.length,
@@ -420,15 +488,20 @@ export function createLocalFamilyRepository(
         const childIdToClientId = Object.fromEntries(
           children.map((child, index) => [child.id, draft.childDrafts[index]!.clientId]),
         );
-        const configuredChildIds: string[] = [];
+        const credentialIds = await managedCredentialIds(candidate);
+        const checkpoint = await options.pinVault.checkpoint([
+          ...credentialIds,
+          ...children.map((child) => child.id),
+        ]);
         try {
+          for (const childId of credentialIds) {
+            await options.pinVault.remove(childId);
+          }
           for (const child of children) {
             const clientId = childIdToClientId[child.id];
-            const pin = clientId ? input.childPins[clientId] : undefined;
+            const pin = clientId ? parsedChildPins[clientId] : undefined;
             if (!pin) continue;
-            const parsed = ConfigureChildPinSchema.parse({ childId: child.id, pin });
-            await options.pinVault.set(parsed.childId, parsed.pin);
-            configuredChildIds.push(child.id);
+            await options.pinVault.set(child.id, pin);
           }
 
           candidate.pinAttempts = {};
@@ -461,10 +534,7 @@ export function createLocalFamilyRepository(
           await commit(candidate);
           return copy(candidate.snapshot);
         } catch (cause) {
-          await Promise.allSettled(
-            configuredChildIds.map((childId) => options.pinVault.remove(childId)),
-          );
-          throw cause;
+          return restoreVaultOrThrow("family setup completion", cause, checkpoint);
         }
       });
     },
@@ -480,8 +550,7 @@ export function createLocalFamilyRepository(
         const child = candidate.snapshot.children.find((item) => item.id === parsed.childId);
         if (!child) throw new Error("Child profile was not found");
 
-        const wasConfigured = await options.pinVault.isConfigured(child.id);
-        await options.pinVault.set(child.id, parsed.pin);
+        const checkpoint = await options.pinVault.checkpoint([child.id]);
         candidate.snapshot = {
           ...candidate.snapshot,
           children: candidate.snapshot.children.map((item) =>
@@ -491,14 +560,12 @@ export function createLocalFamilyRepository(
         markProcessed(candidate, context.idempotencyKey);
 
         try {
+          await options.pinVault.set(child.id, parsed.pin);
           await commit(candidate);
+          return copy(candidate.snapshot);
         } catch (cause) {
-          if (!wasConfigured) {
-            await options.pinVault.remove(child.id).catch(() => undefined);
-          }
-          throw cause;
+          return restoreVaultOrThrow("child PIN configuration", cause, checkpoint);
         }
-        return copy(candidate.snapshot);
       });
     },
 
@@ -737,10 +804,8 @@ export function createLocalFamilyRepository(
         const candidate = copy(current());
         commandMatches(context, candidate.snapshot.familyId, context.idempotencyKey);
         requireAdultPermission(candidate, context, "manage_privacy");
-        const configuredChildIds = candidate.snapshot.children
-          .filter((child) => child.pinConfigured)
-          .map((child) => child.id);
-        await Promise.all(configuredChildIds.map((childId) => options.pinVault.remove(childId)));
+        const credentialIds = await managedCredentialIds(candidate);
+        const checkpoint = await options.pinVault.checkpoint(credentialIds);
 
         const seed = createDemoSeed();
         candidate.nextSequence = 1;
@@ -748,8 +813,15 @@ export function createLocalFamilyRepository(
         candidate.pinAttempts = {};
         candidate.processedCommandIds = seed.ledger.map((entry) => entry.idempotencyKey);
         candidate.snapshot = seed;
-        await commit(candidate);
-        return copy(candidate.snapshot);
+        try {
+          for (const childId of credentialIds) {
+            await options.pinVault.remove(childId);
+          }
+          await commit(candidate);
+          return copy(candidate.snapshot);
+        } catch (cause) {
+          return restoreVaultOrThrow("demo reset", cause, checkpoint);
+        }
       });
     },
 
