@@ -9,6 +9,7 @@ export type PointTransactionType =
   | "reversal";
 
 export interface PointTransaction {
+  childId: string;
   id: string;
   idempotencyKey: string;
   type: PointTransactionType;

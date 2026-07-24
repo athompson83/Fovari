@@ -37,6 +37,15 @@ importers:
       "@expo/vector-icons":
         specifier: 15.1.1
         version: 15.1.1(expo-font@57.0.1)(react-native@0.86.0(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7))(@types/react@19.2.17)(react@19.2.3))(react@19.2.3)
+      "@fovari/api-client":
+        specifier: workspace:*
+        version: link:../../packages/api-client
+      "@fovari/domain":
+        specifier: workspace:*
+        version: link:../../packages/domain
+      "@fovari/validation":
+        specifier: workspace:*
+        version: link:../../packages/validation
       "@react-native-async-storage/async-storage":
         specifier: 3.1.1
         version: 3.1.1(react-native@0.86.0(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7))(@types/react@19.2.17)(react@19.2.3))(react@19.2.3)

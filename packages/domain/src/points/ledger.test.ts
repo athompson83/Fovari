@@ -8,6 +8,7 @@ const transaction = (
   type: PointTransaction["type"],
 ): PointTransaction => ({
   amount,
+  childId: "child-alex",
   description: id,
   id,
   idempotencyKey: `key-${id}`,
