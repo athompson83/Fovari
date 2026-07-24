@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { FamilySnapshot } from "@fovari/api-client";
@@ -72,6 +72,93 @@ describe("ChildUnlockForm", () => {
       });
     });
     expect(onUnlocked).toHaveBeenCalledOnce();
+  });
+
+  it("dispatches one unlock and one success callback for batched rapid activation", async () => {
+    const unlockChild = vi.fn().mockResolvedValue(createUnlockedChildSnapshot());
+    const onUnlocked = vi.fn();
+
+    render(
+      <ChildUnlockForm
+        child={{ ...createDemoSeed().children[0]!, pinConfigured: false }}
+        onUnlocked={onUnlocked}
+        unlockChild={unlockChild}
+      />,
+    );
+
+    const open = screen.getByRole("button", { name: "Open Alex's space" });
+    act(() => {
+      open.click();
+      open.click();
+    });
+
+    await waitFor(() => {
+      expect(unlockChild).toHaveBeenCalledOnce();
+      expect(onUnlocked).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("ignores a deferred unlock result after unmount", async () => {
+    let resolveUnlock!: (snapshot: FamilySnapshot) => void;
+    const unlockChild = vi.fn().mockReturnValue(
+      new Promise<FamilySnapshot>((resolve) => {
+        resolveUnlock = resolve;
+      }),
+    );
+    const onUnlocked = vi.fn();
+    const { unmount } = render(
+      <ChildUnlockForm
+        child={{ ...createDemoSeed().children[0]!, pinConfigured: false }}
+        onUnlocked={onUnlocked}
+        unlockChild={unlockChild}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Alex's space" }));
+    expect(unlockChild).toHaveBeenCalledOnce();
+    unmount();
+
+    await act(async () => {
+      resolveUnlock(createUnlockedChildSnapshot());
+      await Promise.resolve();
+    });
+
+    expect(onUnlocked).not.toHaveBeenCalled();
+  });
+
+  it("invalidates a pending result when the selected child changes", async () => {
+    let resolveUnlock!: (snapshot: FamilySnapshot) => void;
+    const unlockChild = vi.fn().mockReturnValue(
+      new Promise<FamilySnapshot>((resolve) => {
+        resolveUnlock = resolve;
+      }),
+    );
+    const onUnlocked = vi.fn();
+    const seed = createDemoSeed();
+    const { rerender } = render(
+      <ChildUnlockForm
+        child={{ ...seed.children[0]!, pinConfigured: false }}
+        onUnlocked={onUnlocked}
+        unlockChild={unlockChild}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Alex's space" }));
+    rerender(
+      <ChildUnlockForm
+        child={{ ...seed.children[1]!, pinConfigured: false }}
+        onUnlocked={onUnlocked}
+        unlockChild={unlockChild}
+      />,
+    );
+
+    await act(async () => {
+      resolveUnlock(createUnlockedChildSnapshot());
+      await Promise.resolve();
+    });
+
+    expect(onUnlocked).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it.each([
@@ -165,6 +252,32 @@ describe("ChildUnlockForm", () => {
       expect(unlockChild).not.toHaveBeenCalled();
     },
   );
+
+  it("does not lock the form after a locally invalid PIN", async () => {
+    const unlockChild = vi.fn().mockResolvedValue(createUnlockedChildSnapshot());
+    const onUnlocked = vi.fn();
+
+    render(
+      <ChildUnlockForm
+        child={{ ...createDemoSeed().children[0]!, pinConfigured: true }}
+        onUnlocked={onUnlocked}
+        unlockChild={unlockChild}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Alex PIN"), { target: { value: "123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Open Alex's space" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Use a 4 to 6 digit PIN.");
+    expect(unlockChild).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("Alex PIN"), { target: { value: "1234" } });
+    fireEvent.click(screen.getByRole("button", { name: "Open Alex's space" }));
+
+    await waitFor(() => {
+      expect(unlockChild).toHaveBeenCalledOnce();
+      expect(onUnlocked).toHaveBeenCalledOnce();
+    });
+  });
 
   it("formats repository lockout errors and offers parent recovery", async () => {
     const unlockChild = vi

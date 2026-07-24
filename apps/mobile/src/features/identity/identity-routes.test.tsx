@@ -3,6 +3,7 @@
 import "@testing-library/jest-dom/vitest";
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createDemoSeed, DEMO_IDS } from "../../data/fixtures";
@@ -120,6 +121,47 @@ describe("child handoff routes", () => {
     });
   });
 
+  it("does not navigate when profile selection resolves after route unmount", async () => {
+    let resolveSelection!: (snapshot: ReturnType<typeof createDemoSeed>) => void;
+    routeMocks.repository.selectChild.mockReturnValue(
+      new Promise((resolve) => {
+        resolveSelection = resolve;
+      }),
+    );
+
+    const { unmount } = render(<SelectProfileRoute />);
+    fireEvent.click(screen.getByRole("button", { name: "Choose Alex" }));
+    expect(routeMocks.repository.selectChild).toHaveBeenCalledOnce();
+    unmount();
+
+    await act(async () => {
+      resolveSelection({ ...createDemoSeed(), activeChildId: DEMO_IDS.alex });
+      await Promise.resolve();
+    });
+
+    expect(routeMocks.push).not.toHaveBeenCalled();
+  });
+
+  it("keeps profile selection active across a StrictMode effect replay", async () => {
+    routeMocks.repository.selectChild.mockResolvedValue({
+      ...createDemoSeed(),
+      activeChildId: DEMO_IDS.alex,
+    });
+
+    render(
+      <StrictMode>
+        <SelectProfileRoute />
+      </StrictMode>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Choose Alex" }));
+
+    await waitFor(() => {
+      expect(routeMocks.push).toHaveBeenCalledWith(
+        `/(child)/unlock?childId=${encodeURIComponent(DEMO_IDS.alex)}`,
+      );
+    });
+  });
+
   it("shows profile-selection failure without navigating and allows retry", async () => {
     routeMocks.repository.selectChild
       .mockRejectedValueOnce(new Error("Profile selection failed."))
@@ -186,6 +228,45 @@ describe("child handoff routes", () => {
     });
     expect(routeMocks.repository.selectChild).not.toHaveBeenCalled();
     expect(routeMocks.repository.switchActor).not.toHaveBeenCalled();
+  });
+
+  it("does not navigate when parent sign-out resolves after route unmount", async () => {
+    let resolveSignOut!: (snapshot: ReturnType<typeof createDemoSeed>) => void;
+    routeMocks.repository.signOut.mockReturnValue(
+      new Promise((resolve) => {
+        resolveSignOut = resolve;
+      }),
+    );
+
+    const { unmount } = render(<FamilyRoute />);
+    fireEvent.click(screen.getByRole("button", { name: "Hand off to Alex" }));
+    expect(routeMocks.repository.signOut).toHaveBeenCalledOnce();
+    unmount();
+
+    await act(async () => {
+      resolveSignOut({ ...createDemoSeed(), session: { kind: "signed_out" } });
+      await Promise.resolve();
+    });
+
+    expect(routeMocks.replace).not.toHaveBeenCalled();
+  });
+
+  it("keeps parent handoff active across a StrictMode effect replay", async () => {
+    routeMocks.repository.signOut.mockResolvedValue({
+      ...createDemoSeed(),
+      session: { kind: "signed_out" },
+    });
+
+    render(
+      <StrictMode>
+        <FamilyRoute />
+      </StrictMode>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Hand off to Alex" }));
+
+    await waitFor(() => {
+      expect(routeMocks.replace).toHaveBeenCalledWith("/(child)/select-profile");
+    });
   });
 
   it("announces a parent handoff failure, does not navigate, and allows retry", async () => {

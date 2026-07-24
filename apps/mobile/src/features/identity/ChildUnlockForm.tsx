@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 
 import type { ChildSummary, FamilyRepository } from "@fovari/api-client";
@@ -53,13 +53,29 @@ export function ChildUnlockForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pin, setPin] = useState("");
+  const mounted = useRef(true);
+  const requestGeneration = useRef(0);
+  const unlockInFlight = useRef(false);
+
+  useEffect(() => {
+    mounted.current = true;
+    requestGeneration.current += 1;
+    unlockInFlight.current = false;
+    return () => {
+      mounted.current = false;
+      requestGeneration.current += 1;
+      unlockInFlight.current = false;
+    };
+  }, [child.id]);
 
   const unlock = async () => {
-    if (busy) return;
     if (child.pinConfigured && !/^\d{4,6}$/.test(pin)) {
       setError("Use a 4 to 6 digit PIN.");
       return;
     }
+    if (unlockInFlight.current) return;
+    unlockInFlight.current = true;
+    const generation = ++requestGeneration.current;
     setBusy(true);
     setError(null);
     try {
@@ -68,16 +84,24 @@ export function ChildUnlockForm({
         now: Date.now(),
         ...(child.pinConfigured ? { pin } : {}),
       });
+      if (!mounted.current || requestGeneration.current !== generation) return;
       if (!hasSelectedChildSession(snapshot, child.id)) {
         setError(`${child.name}'s child session could not be opened. Try again.`);
         return;
       }
       onUnlocked?.();
     } catch (cause) {
-      setError(formatUnlockError(cause));
+      if (mounted.current && requestGeneration.current === generation) {
+        setError(formatUnlockError(cause));
+      }
     } finally {
-      setPin("");
-      setBusy(false);
+      if (requestGeneration.current === generation) {
+        unlockInFlight.current = false;
+        if (mounted.current) {
+          setPin("");
+          setBusy(false);
+        }
+      }
     }
   };
 

@@ -1,5 +1,5 @@
 import { useRouter } from "expo-router";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { StyleSheet, Text } from "react-native";
 
 import { colors, spacing } from "@fovari/design-system";
@@ -13,13 +13,25 @@ export default function SelectProfileRoute() {
   const router = useRouter();
   const snapshot = useFamilySnapshot();
   const { busy, error, repository, run } = useFamilyAction();
+  const mounted = useRef(true);
+  const requestGeneration = useRef(0);
   const selectionInFlight = useRef(false);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      requestGeneration.current += 1;
+      selectionInFlight.current = false;
+    };
+  }, []);
 
   if (!snapshot) return <LoadingState />;
 
   const select = async (childId: string) => {
     if (selectionInFlight.current) return;
     selectionInFlight.current = true;
+    const generation = ++requestGeneration.current;
     try {
       const selected = await run(async () => {
         const next = await repository.selectChild(childId);
@@ -28,11 +40,14 @@ export default function SelectProfileRoute() {
         }
         return next;
       });
+      if (!mounted.current || requestGeneration.current !== generation) return;
       router.push(`/(child)/unlock?childId=${encodeURIComponent(selected.activeChildId)}`);
     } catch {
       // useFamilyAction exposes the recoverable message on this route.
     } finally {
-      selectionInFlight.current = false;
+      if (requestGeneration.current === generation) {
+        selectionInFlight.current = false;
+      }
     }
   };
 
