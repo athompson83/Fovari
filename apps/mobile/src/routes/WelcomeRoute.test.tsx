@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { Alert } from "react-native";
+import { Alert, Platform } from "react-native";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createDemoSeed } from "../data/fixtures";
@@ -35,12 +35,40 @@ const lastConfirmation = () => {
 
 describe("WelcomeRoute", () => {
   beforeEach(() => {
+    Object.defineProperty(Platform, "OS", { configurable: true, value: "ios" });
     vi.spyOn(Alert, "alert").mockImplementation(vi.fn());
   });
 
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    Object.defineProperty(Platform, "OS", { configurable: true, value: "web" });
+  });
+
+  it("uses a browser confirmation before replacing a persisted web family", () => {
+    Object.defineProperty(Platform, "OS", { configurable: true, value: "web" });
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirm);
+    const snapshot = { ...createDemoSeed(), pointsName: "Moonstones" };
+    const repository = {
+      beginFamilySetup: vi.fn(),
+      resetDemo: vi.fn(),
+      signInAdult: vi.fn(),
+    };
+    mocks.useFamilySnapshot.mockReturnValue(snapshot);
+    mocks.useFamilyAction.mockReturnValue({
+      busy: false,
+      repository,
+      run: (action: () => Promise<unknown>) => action(),
+    });
+
+    render(<WelcomeRoute />);
+    fireEvent.click(screen.getByRole("button", { name: "Create family account" }));
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("replace"));
+    expect(Alert.alert).not.toHaveBeenCalled();
+    expect(repository.beginFamilySetup).not.toHaveBeenCalled();
   });
 
   it("requires Start over confirmation before replacing an in-progress setup", async () => {

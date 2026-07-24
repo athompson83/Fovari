@@ -187,6 +187,53 @@ const createCompletedFamilyWithPin = async (pin: string) => {
 };
 
 describe("LocalFamilyRepository", () => {
+  it("persists the first onboarding step before family and child details exist", async () => {
+    const { repository } = createTestRepository();
+    await repository.beginFamilySetup(
+      { adultDisplayName: "Morgan" },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "begin-first-step",
+      }),
+    );
+
+    const saved = await repository.saveOnboardingDraft(
+      {
+        draft: {
+          adultDisplayName: "Morgan",
+          childDrafts: [],
+          familyName: "",
+          notificationPreferences: {
+            approvalUpdates: true,
+            childEncouragement: true,
+            enabled: false,
+            quietHoursEnd: "07:00",
+            quietHoursStart: "20:00",
+            weeklySummary: true,
+          },
+          pointsName: "Stars",
+          selectedStarterGoalIds: [],
+          selectedStarterRewardIds: [],
+          timezone: "America/New_York",
+        },
+        onboarding: {
+          completedSteps: ["adult"],
+          currentStep: "family",
+          status: "in_progress",
+        },
+      },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "save-first-step",
+      }),
+    );
+
+    expect(saved.onboarding.currentStep).toBe("family");
+    expect(saved.onboardingDraft?.adultDisplayName).toBe("Morgan");
+  });
+
   it("persists a completed family setup and restores the adult session", async () => {
     const storage = createMemoryStorage();
     const pinVault = createChildPinVault({

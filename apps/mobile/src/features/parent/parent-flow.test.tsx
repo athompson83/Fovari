@@ -59,4 +59,26 @@ describe("parent family dashboard", () => {
     }
     expect(onHandoff).not.toHaveBeenCalled();
   });
+
+  it("uses the active family identities instead of demo fixture names", () => {
+    render(
+      <ParentDashboard
+        onAdd={vi.fn()}
+        onHandoff={vi.fn()}
+        onOpenApprovals={vi.fn()}
+        snapshot={{
+          ...createDemoSeed(),
+          adult: {
+            ...createDemoSeed().adult,
+            displayName: "Morgan",
+          },
+          familyName: "The Park Family",
+        }}
+      />,
+    );
+
+    expect(screen.getByText(/Good morning, Morgan/)).toBeInTheDocument();
+    expect(screen.getByText(/The Park Family is building momentum/)).toBeInTheDocument();
+    expect(screen.queryByText(/Jamie|Rivera/)).not.toBeInTheDocument();
+  });
 });

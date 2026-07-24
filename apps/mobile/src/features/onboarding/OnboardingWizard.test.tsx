@@ -136,6 +136,39 @@ describe("OnboardingWizard", () => {
     expect(screen.getByText("Choose a starter reward")).toBeInTheDocument();
   });
 
+  it("resumes at the persisted step without retaining a raw child PIN", () => {
+    const draft = createDefaultOnboardingDraft();
+    render(
+      <OnboardingWizard
+        busy={false}
+        completeFamilySetup={vi.fn()}
+        error={null}
+        initialDraft={{
+          ...draft,
+          adultDisplayName: "Morgan",
+          childDrafts: [
+            {
+              clientId: "draft-maya",
+              displayName: "Maya",
+              experienceMode: "explorer",
+              pinRequested: true,
+            },
+          ],
+          familyName: "The Park Family",
+        }}
+        initialOnboarding={{
+          completedSteps: ["adult", "family", "children"],
+          currentStep: "starter_goals",
+          status: "in_progress",
+        }}
+        saveOnboardingDraft={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Choose a starter goal")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("2468")).not.toBeInTheDocument();
+  });
+
   it("validates the active step and keeps entered data when persistence fails", async () => {
     const saveOnboardingDraft = vi.fn().mockRejectedValue(new Error("Local save unavailable"));
 

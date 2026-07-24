@@ -35,9 +35,9 @@ export function ParentDashboard({
       <View style={[styles.hero, wide && styles.heroWide]}>
         <View style={styles.heroCopy}>
           <Text style={styles.eyebrow}>THURSDAY · FAMILY OVERVIEW</Text>
-          <Text style={styles.heroTitle}>Good morning, Jamie 👋</Text>
+          <Text style={styles.heroTitle}>Good morning, {snapshot.adult.displayName} 👋</Text>
           <Text style={styles.heroBody}>
-            The Rivera family is building momentum. Here’s what deserves your attention today.
+            {snapshot.familyName} is building momentum. Here’s what deserves your attention today.
           </Text>
         </View>
         <Button accessibilityLabel="Add a goal or reward" onPress={onAdd} style={styles.addButton}>

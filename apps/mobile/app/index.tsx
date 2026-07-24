@@ -1,6 +1,6 @@
 import { useRouter } from "expo-router";
 import { useRef } from "react";
-import { Alert } from "react-native";
+import { Alert, Platform } from "react-native";
 
 import { WelcomeScreen } from "../src/components/WelcomeScreen";
 import { LoadingState } from "../src/components/LoadingState";
@@ -62,18 +62,32 @@ export default function WelcomeRoute() {
 
   const untouchedDemo = isUntouchedDemoSnapshot(snapshot);
 
+  const confirmReplacement = (
+    title: string,
+    message: string,
+    confirmLabel: string,
+    onConfirm: () => void,
+  ) => {
+    if (Platform.OS === "web") {
+      if (globalThis.confirm(`${title}\n\n${message}`)) onConfirm();
+      return;
+    }
+    Alert.alert(title, message, [
+      { style: "cancel", text: "Keep my family" },
+      { onPress: onConfirm, style: "destructive", text: confirmLabel },
+    ]);
+  };
+
   const requestCreateFamily = () => {
     if (untouchedDemo) {
       void createFamily();
       return;
     }
-    Alert.alert(
+    confirmReplacement(
       "Start over with a new family?",
       "Starting over will replace the family setup saved on this device.",
-      [
-        { style: "cancel", text: "Keep my family" },
-        { onPress: () => void createFamily(), style: "destructive", text: "Start over" },
-      ],
+      "Start over",
+      () => void createFamily(),
     );
   };
 
@@ -82,13 +96,11 @@ export default function WelcomeRoute() {
       void openDemo();
       return;
     }
-    Alert.alert(
+    confirmReplacement(
       "Replace your local family?",
       "Exploring the demo will replace the family setup saved on this device with synthetic demo data.",
-      [
-        { style: "cancel", text: "Keep my family" },
-        { onPress: () => void openDemo(), style: "destructive", text: "Replace with demo" },
-      ],
+      "Replace with demo",
+      () => void openDemo(),
     );
   };
 

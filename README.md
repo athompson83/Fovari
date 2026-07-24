@@ -36,8 +36,22 @@ pnpm install --frozen-lockfile
 pnpm --filter @fovari/mobile web
 ```
 
-Open the local URL printed by Expo. Choose **Explore the family demo**. All names, balances, goals,
-and rewards are synthetic and reset when the process restarts.
+Open the local URL printed by Expo. You can:
+
+- Choose **Create a family account** to complete the seven-step local setup. The setup is saved on
+  this device, resumes after a refresh, and opens the parent dashboard when complete.
+- Choose **Explore the family demo** to load the synthetic Rivera family.
+- Choose **Continue with ...** when this browser already has a saved family.
+
+Use synthetic names and PINs only. A child PIN in this local build protects the shared-device
+handoff; it is not production authentication and must not be reused as a real password or account
+credential. The PIN is stored only through the local repository's derived verifier, not as raw setup
+text.
+
+Creating a new family or opening the demo after setup asks before replacing the family saved in the
+browser. Confirming that prompt resets the local family; dismissing it keeps the current family.
+Stopping and restarting the Expo process does not itself erase browser storage. Clear the site's
+local storage when you intentionally need a completely fresh device.
 
 Other app commands:
 
@@ -70,7 +84,9 @@ business rules live in `packages/domain`, validation in `packages/validation`, c
 
 See [system overview](docs/architecture/system-overview.md),
 [test strategy](docs/testing/test-strategy.md), [security model](SECURITY.md), and
-[local release evidence](docs/testing/local-release-1-evidence.md).
+[local release evidence](docs/testing/local-release-1-evidence.md). The focused
+[family setup and identity evidence](docs/testing/family-setup-identity-evidence.md) records the
+synthetic shared-device journey.
 
 ## Release boundary
 

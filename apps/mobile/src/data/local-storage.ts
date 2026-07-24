@@ -373,7 +373,8 @@ function isSnapshot(value: unknown): value is FamilySnapshot {
 function isOnboardingDraft(value: unknown): boolean {
   if (
     !isRecord(value) ||
-    !hasStringFields(value, ["adultDisplayName", "familyName", "pointsName", "timezone"])
+    !hasStringFields(value, ["adultDisplayName", "pointsName", "timezone"]) ||
+    !isPossiblyEmptyString(value.familyName)
   ) {
     return false;
   }

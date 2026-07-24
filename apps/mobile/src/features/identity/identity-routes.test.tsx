@@ -10,6 +10,7 @@ import { createDemoSeed, DEMO_IDS } from "../../data/fixtures";
 import SelectProfileRoute from "../../../app/(child)/select-profile";
 import UnlockRoute from "../../../app/(child)/unlock";
 import KioskRoute from "../../../app/(kiosk)";
+import ParentLayout from "../../../app/(parent)/_layout";
 import FamilyRoute from "../../../app/(parent)/(tabs)/family";
 
 const routeMocks = vi.hoisted(() => ({
@@ -27,6 +28,7 @@ const routeMocks = vi.hoisted(() => ({
 
 vi.mock("expo-router", () => ({
   Redirect: ({ href }: { href: string }) => <div>Redirect to {href}</div>,
+  Stack: () => <div>Parent stack</div>,
   useLocalSearchParams: () => routeMocks.params,
   useRouter: () => ({
     push: routeMocks.push,
@@ -58,6 +60,7 @@ vi.mock("../../hooks/use-family", async () => {
       return { busy, error, repository: routeMocks.repository, run };
     },
     useFamilySnapshot: () => routeMocks.snapshot,
+    useFamilySession: () => routeMocks.snapshot?.session ?? null,
   };
 });
 
@@ -74,6 +77,18 @@ beforeEach(() => {
 });
 
 describe("child handoff routes", () => {
+  it("redirects a signed-out parent route directly to the profile picker", () => {
+    routeMocks.snapshot = {
+      ...createDemoSeed(),
+      session: { kind: "signed_out" },
+    };
+
+    render(<ParentLayout />);
+
+    expect(screen.getByText("Redirect to /(child)/select-profile")).toBeInTheDocument();
+    expect(screen.queryByText("Grown-up access required")).not.toBeInTheDocument();
+  });
+
   it("selects a profile without creating a session, then routes through unlock", async () => {
     routeMocks.repository.selectChild.mockResolvedValue(createDemoSeed());
 
