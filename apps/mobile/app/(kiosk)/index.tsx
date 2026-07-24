@@ -1,4 +1,5 @@
 import { useRouter } from "expo-router";
+import { useRef } from "react";
 import { Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 
 import { colors, getAgeModeTokens, radii, spacing } from "@fovari/design-system";
@@ -14,17 +15,45 @@ import { useFamilyAction, useFamilySnapshot } from "../../src/hooks/use-family";
 export default function KioskRoute() {
   const router = useRouter();
   const snapshot = useFamilySnapshot();
-  const { repository, run } = useFamilyAction();
+  const { busy, error, repository, run } = useFamilyAction();
+  const selectionInFlight = useRef(false);
   const { width } = useWindowDimensions();
   if (!snapshot) return <LoadingState />;
-  const active =
-    snapshot.children.find((item) => item.id === snapshot.activeChildId) ?? snapshot.children[0]!;
-  const mode = getAgeModeTokens(active.experienceMode);
   const wide = width >= 760;
 
   const select = async (childId: string) => {
-    await run(() => repository.selectChild(childId));
+    if (selectionInFlight.current) return;
+    selectionInFlight.current = true;
+    try {
+      await run(() => repository.selectChild(childId));
+    } catch {
+      // useFamilyAction exposes the recoverable message on this route.
+    } finally {
+      selectionInFlight.current = false;
+    }
   };
+
+  if (snapshot.children.length === 0) {
+    return (
+      <Screen contentContainerStyle={styles.emptyScreen}>
+        <Card style={styles.emptyCard}>
+          <Text style={styles.section}>No child profiles are available.</Text>
+          <Text style={styles.emptyCopy}>Ask a grown-up to finish setting up the family.</Text>
+          <Button
+            accessibilityLabel="Ask a grown-up"
+            onPress={() => router.push("/(child)/parent-gate")}
+            tone="secondary"
+          >
+            Ask a grown-up
+          </Button>
+        </Card>
+      </Screen>
+    );
+  }
+
+  const active =
+    snapshot.children.find((item) => item.id === snapshot.activeChildId) ?? snapshot.children[0]!;
+  const mode = getAgeModeTokens(active.experienceMode);
 
   return (
     <Screen>
@@ -46,9 +75,15 @@ export default function KioskRoute() {
               <Pressable
                 accessibilityLabel={`Select ${child.name}`}
                 accessibilityRole="button"
+                accessibilityState={{ disabled: busy }}
+                disabled={busy}
                 key={child.id}
                 onPress={() => void select(child.id)}
-                style={[styles.profile, selected && styles.profileSelected]}
+                style={[
+                  styles.profile,
+                  selected && styles.profileSelected,
+                  busy && styles.disabled,
+                ]}
               >
                 <Avatar name={child.name} size={48} />
                 <View style={styles.profileCopy}>
@@ -84,8 +119,14 @@ export default function KioskRoute() {
               </View>
             ))}
           </Card>
+          {error ? (
+            <Text accessibilityLiveRegion="polite" accessibilityRole="alert" style={styles.error}>
+              {error}
+            </Text>
+          ) : null}
           <Button
             accessibilityLabel={`Open ${active.name}'s space`}
+            disabled={busy}
             onPress={() => router.push(`/(child)/unlock?childId=${encodeURIComponent(active.id)}`)}
           >
             Open {active.name}’s space
@@ -101,6 +142,27 @@ const styles = StyleSheet.create({
     borderRadius: radii.xl,
     marginBottom: spacing.lg,
     padding: spacing.xl,
+  },
+  disabled: {
+    opacity: 0.5,
+  },
+  emptyCard: {
+    alignSelf: "center",
+    maxWidth: 520,
+    width: "100%",
+  },
+  emptyCopy: {
+    color: colors.inkMuted,
+    marginBottom: spacing.lg,
+    marginTop: spacing.sm,
+  },
+  emptyScreen: {
+    justifyContent: "center",
+  },
+  error: {
+    color: "#A42C4E",
+    marginBottom: spacing.md,
+    textAlign: "center",
   },
   event: {
     alignItems: "center",

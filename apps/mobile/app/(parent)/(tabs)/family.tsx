@@ -1,4 +1,8 @@
 import { useRouter } from "expo-router";
+import { useRef } from "react";
+import { StyleSheet, Text } from "react-native";
+
+import { spacing } from "@fovari/design-system";
 
 import { LoadingState } from "../../../src/components/LoadingState";
 import { PageHeader } from "../../../src/components/PageHeader";
@@ -9,15 +13,24 @@ import { useFamilyAction, useFamilySnapshot } from "../../../src/hooks/use-famil
 export default function FamilyRoute() {
   const router = useRouter();
   const snapshot = useFamilySnapshot();
-  const { repository, run } = useFamilyAction();
+  const { busy, error, repository, run } = useFamilyAction();
+  const handoffInFlight = useRef(false);
 
   if (!snapshot) {
     return <LoadingState />;
   }
 
   const handoff = async () => {
-    await run(() => repository.signOut());
-    router.replace("/(child)/select-profile");
+    if (handoffInFlight.current) return;
+    handoffInFlight.current = true;
+    try {
+      await run(() => repository.signOut());
+      router.replace("/(child)/select-profile");
+    } catch {
+      // useFamilyAction exposes the recoverable message on this route.
+    } finally {
+      handoffInFlight.current = false;
+    }
   };
 
   return (
@@ -29,11 +42,25 @@ export default function FamilyRoute() {
         title="Family"
       />
       <ParentDashboard
+        handoffBusy={busy}
         onAdd={() => router.push("/(parent)/(tabs)/add")}
         onHandoff={() => void handoff()}
         onOpenApprovals={() => router.push("/(parent)/approvals")}
         snapshot={snapshot}
       />
+      {error ? (
+        <Text accessibilityLiveRegion="polite" accessibilityRole="alert" style={styles.error}>
+          {error}
+        </Text>
+      ) : null}
     </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  error: {
+    color: "#A42C4E",
+    marginTop: spacing.lg,
+    textAlign: "center",
+  },
+});

@@ -2,11 +2,13 @@
 
 import "@testing-library/jest-dom/vitest";
 
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDemoSeed } from "../../data/fixtures";
 import { ParentDashboard } from "./ParentDashboard";
+
+afterEach(cleanup);
 
 describe("parent family dashboard", () => {
   it("summarizes every child, surfaces approvals, and makes the next action obvious", () => {
@@ -35,5 +37,26 @@ describe("parent family dashboard", () => {
     expect(onAdd).toHaveBeenCalledOnce();
     expect(onApproval).toHaveBeenCalledOnce();
     expect(onHandoff).toHaveBeenCalledWith("20000000-0000-4000-8000-000000000001");
+  });
+
+  it("disables every child handoff while a handoff is in flight", () => {
+    const onHandoff = vi.fn();
+
+    render(
+      <ParentDashboard
+        handoffBusy
+        onAdd={vi.fn()}
+        onHandoff={onHandoff}
+        onOpenApprovals={vi.fn()}
+        snapshot={createDemoSeed()}
+      />,
+    );
+
+    for (const handoff of screen.getAllByRole("button", { name: /Hand off to/ })) {
+      expect(handoff).toBeDisabled();
+      expect(handoff).toHaveAttribute("aria-disabled", "true");
+      fireEvent.click(handoff);
+    }
+    expect(onHandoff).not.toHaveBeenCalled();
   });
 });

@@ -33,4 +33,27 @@ describe("ProfilePicker", () => {
     expect(screen.getByRole("button", { name: "Choose Alex" })).toHaveTextContent("PIN protected");
     expect(screen.getByRole("button", { name: "Choose June" })).toHaveTextContent("Ready to open");
   });
+
+  it("disables every profile while selection is in flight", () => {
+    const onSelect = vi.fn();
+
+    render(<ProfilePicker children={createDemoSeed().children} disabled onSelect={onSelect} />);
+
+    for (const profile of screen.getAllByRole("button", { name: /Choose/ })) {
+      expect(profile).toBeDisabled();
+      expect(profile).toHaveAttribute("aria-disabled", "true");
+      fireEvent.click(profile);
+    }
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("shows a grown-up recovery action when no child profiles exist", () => {
+    const onParentRecovery = vi.fn();
+
+    render(<ProfilePicker children={[]} onParentRecovery={onParentRecovery} onSelect={vi.fn()} />);
+
+    expect(screen.getByText("No child profiles are available.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Ask a grown-up" }));
+    expect(onParentRecovery).toHaveBeenCalledOnce();
+  });
 });

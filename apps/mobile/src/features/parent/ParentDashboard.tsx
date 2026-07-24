@@ -10,6 +10,7 @@ import { ProgressBar } from "../../components/ProgressBar";
 import { SectionHeader } from "../../components/SectionHeader";
 
 interface ParentDashboardProps {
+  handoffBusy?: boolean;
   onAdd: () => void;
   onHandoff: (childId: string) => void;
   onOpenApprovals: () => void;
@@ -19,6 +20,7 @@ interface ParentDashboardProps {
 const childColors = [colors.lavender, "#DDF8F0", "#FFE7EF", "#FFF2CC"];
 
 export function ParentDashboard({
+  handoffBusy = false,
   onAdd,
   onHandoff,
   onOpenApprovals,
@@ -131,6 +133,8 @@ export function ParentDashboard({
 
               <Button
                 accessibilityLabel={`Hand off to ${child.name}`}
+                accessibilityState={{ disabled: handoffBusy }}
+                disabled={handoffBusy}
                 onPress={() => onHandoff(child.id)}
                 tone="secondary"
               >

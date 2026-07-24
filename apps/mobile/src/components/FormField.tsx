@@ -24,7 +24,11 @@ export function FormField({ error, label, multiline, style, ...props }: FormFiel
           style,
         ]}
       />
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {error ? (
+        <Text accessibilityLiveRegion="polite" accessibilityRole="alert" style={styles.error}>
+          {error}
+        </Text>
+      ) : null}
     </View>
   );
 }

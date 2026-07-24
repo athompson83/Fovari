@@ -29,6 +29,21 @@ function formatUnlockError(cause: unknown): string {
   })}.`;
 }
 
+function hasSelectedChildSession(
+  snapshot: Awaited<ReturnType<FamilyRepository["unlockChild"]>>,
+  childId: string,
+) {
+  return (
+    snapshot.session.kind === "child" &&
+    snapshot.session.childId === childId &&
+    snapshot.session.actorId === childId &&
+    snapshot.activeChildId === childId &&
+    snapshot.activeActor.role === "child" &&
+    snapshot.activeActor.id === childId &&
+    snapshot.activeActor.childId === childId
+  );
+}
+
 export function ChildUnlockForm({
   child,
   onParentRecovery,
@@ -41,6 +56,10 @@ export function ChildUnlockForm({
 
   const unlock = async () => {
     if (busy) return;
+    if (child.pinConfigured && !/^\d{4,6}$/.test(pin)) {
+      setError("Use a 4 to 6 digit PIN.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -49,7 +68,7 @@ export function ChildUnlockForm({
         now: Date.now(),
         ...(child.pinConfigured ? { pin } : {}),
       });
-      if (snapshot.session.kind !== "child" || snapshot.session.childId !== child.id) {
+      if (!hasSelectedChildSession(snapshot, child.id)) {
         setError(`${child.name}'s child session could not be opened. Try again.`);
         return;
       }
