@@ -401,11 +401,15 @@ function isEnvelope(value: unknown): value is LocalFamilyEnvelopeV1 {
   const offlineActions = value.offlineActions as readonly OfflineAction[];
   const processedCommandIds = value.processedCommandIds as readonly string[];
   const pinAttempts = value.pinAttempts as LocalFamilyEnvelopeV1["pinAttempts"];
+  const ledgerIds = new Set(snapshot.ledger.map((entry) => entry.id));
+  const ledgerIdempotencyKeys = new Set(snapshot.ledger.map((entry) => entry.idempotencyKey));
 
   if (
     !Object.keys(pinAttempts).every((childId) => childIds.has(childId)) ||
     !offlineActions.every((action) => knownActorIds.has(action.actorId)) ||
     new Set(offlineActions.map((action) => action.idempotencyKey)).size !== offlineActions.length ||
+    ledgerIds.size !== snapshot.ledger.length ||
+    ledgerIdempotencyKeys.size !== snapshot.ledger.length ||
     !snapshot.ledger.every((entry) => processedCommandIds.includes(entry.idempotencyKey))
   ) {
     return false;

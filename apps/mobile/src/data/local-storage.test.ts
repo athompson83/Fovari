@@ -151,6 +151,20 @@ describe("versioned local family storage", () => {
         ...valid,
         snapshot: {
           ...seed,
+          ledger: [ledgerEntry, { ...seed.ledger[1]!, id: ledgerEntry.id }],
+        },
+      },
+      {
+        ...valid,
+        snapshot: {
+          ...seed,
+          ledger: [ledgerEntry, { ...seed.ledger[1]!, idempotencyKey: ledgerEntry.idempotencyKey }],
+        },
+      },
+      {
+        ...valid,
+        snapshot: {
+          ...seed,
           children: seed.children.map((child) =>
             child.id === ledgerEntry.childId ? { ...child, points: child.points + 1 } : child,
           ),
