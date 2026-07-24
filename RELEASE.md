@@ -19,7 +19,7 @@ viewports:
 1. Start from an empty browser profile and create Morgan's synthetic family.
 2. Add Maya with the Explorer stage and a synthetic `2468` PIN.
 3. Add the **Read together** starter goal and **Family movie night** reward.
-4. Review the setup and confirm **Create my family** is reachable at normal and 125% browser zoom.
+4. Review the setup and confirm **Create my family** is reachable at the normal browser scale.
 5. Hand off to Maya and verify `0000` is rejected before `2468` opens the child home.
 6. Refresh the child home and confirm the Maya session and family remain available.
 7. Pass the adult gate with the synthetic answer `12`, return to Morgan's dashboard, and hand off
@@ -33,6 +33,10 @@ viewports:
 Use only synthetic names and PINs. This local shared-device identity model is not a claim of
 production authentication, account recovery, or remote session security. See the
 [focused evidence ledger](docs/testing/family-setup-identity-evidence.md).
+
+Genuine 125% browser zoom and native text scaling were not observed for this checkpoint and remain
+pending release gates. A CSS page-zoom value of `1.25` was exercised only as a supplemental layout
+check; it is not browser-zoom, native-text-scale, or accessibility certification.
 
 The broader synthetic points/reward core loop remains a separate release gate:
 

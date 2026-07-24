@@ -1,5 +1,6 @@
+# Setup-and-handoff smoke only. Browser and rendered tests cover restart/restore and return flows.
 appId: com.fovari.mobile.dev
-name: Fovari synthetic family setup and identity
+name: Fovari synthetic setup and handoff smoke
 ---
 - launchApp:
     clearState: true
