@@ -16,6 +16,10 @@ interface ChildUnlockFormProps {
   unlockChild: FamilyRepository["unlockChild"];
 }
 
+export function ChildUnlockForm(props: ChildUnlockFormProps) {
+  return <StatefulChildUnlockForm key={props.child.id} {...props} />;
+}
+
 function formatUnlockError(cause: unknown): string {
   const message = cause instanceof Error ? cause.message : "This profile could not be opened.";
   const lockoutPrefix = "Profile locked until ";
@@ -44,7 +48,7 @@ function hasSelectedChildSession(
   );
 }
 
-export function ChildUnlockForm({
+function StatefulChildUnlockForm({
   child,
   onParentRecovery,
   onUnlocked,

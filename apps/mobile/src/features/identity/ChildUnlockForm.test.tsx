@@ -14,12 +14,12 @@ afterEach(cleanup);
 
 const childId = "20000000-0000-4000-8000-000000000001";
 
-function createUnlockedChildSnapshot(): FamilySnapshot {
+function createUnlockedChildSnapshot(selectedChildId = childId): FamilySnapshot {
   return {
     ...createDemoSeed(),
-    activeActor: { childId, id: childId, role: "child" },
-    activeChildId: childId,
-    session: { actorId: childId, childId, kind: "child" },
+    activeActor: { childId: selectedChildId, id: selectedChildId, role: "child" },
+    activeChildId: selectedChildId,
+    session: { actorId: selectedChildId, childId: selectedChildId, kind: "child" },
   };
 }
 
@@ -126,38 +126,63 @@ describe("ChildUnlockForm", () => {
     expect(onUnlocked).not.toHaveBeenCalled();
   });
 
-  it("invalidates a pending result when the selected child changes", async () => {
+  it("remounts clean state for a new child and isolates it from the prior pending result", async () => {
     let resolveUnlock!: (snapshot: FamilySnapshot) => void;
-    const unlockChild = vi.fn().mockReturnValue(
-      new Promise<FamilySnapshot>((resolve) => {
-        resolveUnlock = resolve;
-      }),
-    );
-    const onUnlocked = vi.fn();
     const seed = createDemoSeed();
+    const juneId = seed.children[1]!.id;
+    const unlockChild = vi
+      .fn()
+      .mockReturnValueOnce(
+        new Promise<FamilySnapshot>((resolve) => {
+          resolveUnlock = resolve;
+        }),
+      )
+      .mockResolvedValueOnce(createUnlockedChildSnapshot(juneId));
+    const onUnlocked = vi.fn();
     const { rerender } = render(
       <ChildUnlockForm
-        child={{ ...seed.children[0]!, pinConfigured: false }}
+        child={{ ...seed.children[0]!, pinConfigured: true }}
         onUnlocked={onUnlocked}
         unlockChild={unlockChild}
       />,
     );
 
+    fireEvent.change(screen.getByLabelText("Alex PIN"), { target: { value: "1111" } });
     fireEvent.click(screen.getByRole("button", { name: "Open Alex's space" }));
+    expect(unlockChild).toHaveBeenCalledOnce();
+
     rerender(
       <ChildUnlockForm
-        child={{ ...seed.children[1]!, pinConfigured: false }}
+        child={{ ...seed.children[1]!, pinConfigured: true }}
         onUnlocked={onUnlocked}
         unlockChild={unlockChild}
       />,
     );
+
+    const junePin = screen.getByLabelText("June PIN");
+    const openJune = screen.getByRole("button", { name: "Open June's space" });
+    expect(junePin).toHaveValue("");
+    expect(openJune).not.toBeDisabled();
+
+    fireEvent.change(junePin, { target: { value: "2222" } });
+    fireEvent.click(openJune);
+    await waitFor(() => {
+      expect(unlockChild).toHaveBeenCalledTimes(2);
+      expect(unlockChild).toHaveBeenLastCalledWith({
+        childId: juneId,
+        now: expect.any(Number),
+        pin: "2222",
+      });
+      expect(onUnlocked).toHaveBeenCalledOnce();
+    });
 
     await act(async () => {
       resolveUnlock(createUnlockedChildSnapshot());
       await Promise.resolve();
     });
 
-    expect(onUnlocked).not.toHaveBeenCalled();
+    expect(onUnlocked).toHaveBeenCalledOnce();
+    expect(junePin).toHaveValue("");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
