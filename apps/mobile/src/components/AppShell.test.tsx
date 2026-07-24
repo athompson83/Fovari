@@ -8,8 +8,12 @@ import { WelcomeScreen } from "./WelcomeScreen";
 
 describe("Fovari welcome", () => {
   it("communicates the family promise and provides a working demo entry", () => {
+    const onCreateAccount = vi.fn();
     const onDemo = vi.fn();
-    render(<WelcomeScreen onDemo={onDemo} />);
+    const onOpenLink = vi.fn();
+    render(
+      <WelcomeScreen onCreateAccount={onCreateAccount} onDemo={onDemo} onOpenLink={onOpenLink} />,
+    );
 
     expect(screen.getByText("Fovari")).toBeInTheDocument();
     expect(screen.getByText("Grow together.")).toBeInTheDocument();
@@ -20,6 +24,10 @@ describe("Fovari welcome", () => {
     expect(screen.getByText("Support")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Explore the family demo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create family account" }));
+    fireEvent.click(screen.getByRole("link", { name: "Privacy" }));
     expect(onDemo).toHaveBeenCalledTimes(1);
+    expect(onCreateAccount).toHaveBeenCalledTimes(1);
+    expect(onOpenLink).toHaveBeenCalledWith("Privacy");
   });
 });

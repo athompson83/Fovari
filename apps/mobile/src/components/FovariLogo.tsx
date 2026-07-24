@@ -58,10 +58,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     height: 50,
     justifyContent: "center",
-    shadowColor: colors.purpleDark,
-    shadowOffset: { height: 7, width: 0 },
-    shadowOpacity: 0.22,
-    shadowRadius: 14,
+    boxShadow: "0 7px 14px rgba(74, 44, 168, 0.22)",
     width: 50,
   },
   row: {

@@ -18,9 +18,6 @@ const styles = StyleSheet.create({
     borderRadius: radii.lg,
     borderWidth: 1,
     padding: spacing.lg,
-    shadowColor: colors.navy,
-    shadowOffset: { height: 6, width: 0 },
-    shadowOpacity: 0.06,
-    shadowRadius: 16,
+    boxShadow: "0 6px 16px rgba(23, 33, 80, 0.06)",
   },
 });

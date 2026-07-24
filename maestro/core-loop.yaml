@@ -1,0 +1,21 @@
+appId: com.fovari.mobile.dev
+name: Fovari synthetic family core loop
+---
+- launchApp:
+    clearState: true
+- assertVisible: "Fovari"
+- tapOn: "Explore the family demo"
+- assertVisible: "Good morning, Jamie.*"
+- tapOn: "Hand off to Alex"
+- assertVisible: "Hi, Alex!"
+- tapOn: "Start Read for 20 minutes"
+- tapOn: "Start 20-minute timer"
+- tapOn: "I did it — send for review"
+- tapOn: "Profile"
+- tapOn: "Grown-up controls"
+- tapOn: "Parent gate answer"
+- inputText: "12"
+- tapOn: "Unlock grown-up controls"
+- tapOn: "Review pending approvals"
+- assertVisible: "Read for 20 minutes"
+- tapOn: "Approve & celebrate"

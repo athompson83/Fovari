@@ -5,7 +5,7 @@
   "main": "expo-router/entry",
   "scripts": {
     "android": "expo run:android",
-    "build": "tsc -p tsconfig.json --noEmit",
+    "build": "expo export --platform web --output-dir dist",
     "clean": "rimraf dist .expo coverage",
     "dev": "expo start",
     "ios": "expo run:ios",

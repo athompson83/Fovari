@@ -8,7 +8,9 @@ import { FovariLogo } from "./FovariLogo";
 import { Screen } from "./Screen";
 
 export interface WelcomeScreenProps {
+  onCreateAccount(): void;
   onDemo(): void;
+  onOpenLink(label: "Privacy" | "Support" | "Terms"): void;
 }
 
 const benefits = [
@@ -24,7 +26,7 @@ const modes = [
   { accent: "#24335F", age: "15–17", emoji: "🚀", label: "Launch" },
 ] as const;
 
-export function WelcomeScreen({ onDemo }: WelcomeScreenProps) {
+export function WelcomeScreen({ onCreateAccount, onDemo, onOpenLink }: WelcomeScreenProps) {
   const { width } = useWindowDimensions();
   const wide = width >= 820;
 
@@ -53,7 +55,7 @@ export function WelcomeScreen({ onDemo }: WelcomeScreenProps) {
             >
               Explore the family demo
             </Button>
-            <Button onPress={() => undefined} tone="secondary">
+            <Button onPress={onCreateAccount} tone="secondary">
               Create family account
             </Button>
           </View>
@@ -136,8 +138,8 @@ export function WelcomeScreen({ onDemo }: WelcomeScreenProps) {
       <View style={styles.trustBar}>
         <Text style={styles.trustStatement}>Built for families. Designed for kids.</Text>
         <View style={styles.legalLinks}>
-          {["Privacy", "Terms", "Support"].map((label) => (
-            <Pressable accessibilityRole="link" key={label} onPress={() => undefined}>
+          {(["Privacy", "Terms", "Support"] as const).map((label) => (
+            <Pressable accessibilityRole="link" key={label} onPress={() => onOpenLink(label)}>
               <Text style={styles.legalLink}>{label}</Text>
             </Pressable>
           ))}

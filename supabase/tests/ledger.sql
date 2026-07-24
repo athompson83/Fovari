@@ -7,6 +7,11 @@ select set_config(
   '{"sub":"10000000-0000-4000-8000-000000000002","role":"authenticated"}',
   true
 );
+select set_config(
+  'request.jwt.claim.sub',
+  '10000000-0000-4000-8000-000000000002',
+  true
+);
 
 select lives_ok(
   $$
