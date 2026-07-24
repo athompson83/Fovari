@@ -38,7 +38,7 @@ interface StorageFailureRule {
   after?: boolean;
   error: Error;
   key: string;
-  operation: "remove" | "set";
+  operation: "get" | "remove" | "set";
   skip?: number;
 }
 
@@ -57,7 +57,11 @@ const createFailureStorage = () => {
     return undefined;
   };
   const storage: KeyValueStorage = {
-    getItem: base.getItem,
+    async getItem(key) {
+      const failure = takeFailure("get", key);
+      if (failure) throw failure.error;
+      return base.getItem(key);
+    },
     async removeItem(key) {
       const failure = takeFailure("remove", key);
       if (!failure?.after && failure) throw failure.error;
@@ -77,6 +81,21 @@ const createFailureStorage = () => {
     },
     storage,
   };
+};
+
+const failFinalEnvelopeWriteAndReadback = (failures: ReturnType<typeof createFailureStorage>) => {
+  failures.failNext({
+    after: true,
+    error: new Error("final envelope acknowledgement unavailable"),
+    key: "fovari.local-family",
+    operation: "set",
+    skip: 1,
+  });
+  failures.failNext({
+    error: new Error("immediate envelope readback unavailable"),
+    key: "fovari.local-family",
+    operation: "get",
+  });
 };
 
 const createSetupDraft = (
@@ -1244,6 +1263,195 @@ describe("LocalFamilyRepository", () => {
       ),
     ).toEqual(createDemoSeed());
     expect(await pinVault.isConfigured(DEMO_IDS.alex)).toBe(false);
+  });
+
+  it("reloads a durable credential commit before same-instance getSnapshot", async () => {
+    const failures = createFailureStorage();
+    const { pinVault, repository } = createRepositoryWithStorage(failures.storage);
+    const context = createCommandContext({
+      actorId: DEMO_IDS.parent,
+      familyId: DEMO_IDS.family,
+      idempotencyKey: "same-instance-configure-snapshot",
+    });
+    await repository.getSnapshot();
+    failFinalEnvelopeWriteAndReadback(failures);
+
+    const configure = repository.configureChildPin(
+      { childId: DEMO_IDS.alex, pin: "2468" },
+      context,
+    );
+    const snapshotAfterMutation = repository.getSnapshot();
+    await expect(configure).rejects.toThrow(
+      "Inconsistent local demo envelope state after ambiguous write",
+    );
+
+    const recovered = await snapshotAfterMutation;
+    expect(recovered.children.find((child) => child.id === DEMO_IDS.alex)?.pinConfigured).toBe(
+      true,
+    );
+    expect(await pinVault.verify(DEMO_IDS.alex, "2468")).toBe(true);
+    expect(await pinVault.getPendingTransactionId()).toBeNull();
+    await expect(
+      repository.configureChildPin({ childId: DEMO_IDS.alex, pin: "2468" }, context),
+    ).rejects.toThrow("already processed");
+  });
+
+  it("keeps quarantined reads and mutations closed while reconciliation is unavailable", async () => {
+    const failures = createFailureStorage();
+    const { repository } = createRepositoryWithStorage(failures.storage);
+    await repository.getSnapshot();
+    failFinalEnvelopeWriteAndReadback(failures);
+
+    await expect(
+      repository.configureChildPin(
+        { childId: DEMO_IDS.alex, pin: "2468" },
+        createCommandContext({
+          actorId: DEMO_IDS.parent,
+          familyId: DEMO_IDS.family,
+          idempotencyKey: "unavailable-reconciliation-configure",
+        }),
+      ),
+    ).rejects.toThrow("Inconsistent local demo envelope state after ambiguous write");
+
+    failures.failNext({
+      error: new Error("snapshot reconciliation unavailable"),
+      key: "fovari.local-family",
+      operation: "get",
+    });
+    await expect(repository.getSnapshot()).rejects.toThrow("snapshot reconciliation unavailable");
+
+    failures.failNext({
+      error: new Error("mutation reconciliation unavailable"),
+      key: "fovari.local-family",
+      operation: "get",
+    });
+    await expect(
+      repository.switchActor({ childId: DEMO_IDS.alex, id: DEMO_IDS.alex, role: "child" }),
+    ).rejects.toThrow("mutation reconciliation unavailable");
+
+    const recovered = await repository.getSnapshot();
+    expect(recovered.children.find((child) => child.id === DEMO_IDS.alex)?.pinConfigured).toBe(
+      true,
+    );
+    expect(recovered.session.kind).toBe("adult");
+  });
+
+  it("reloads an ordinary durable commit before reusing the same instance", async () => {
+    const failures = createFailureStorage();
+    const { repository } = createRepositoryWithStorage(failures.storage);
+    await repository.getSnapshot();
+    const context = createCommandContext({
+      actorId: DEMO_IDS.parent,
+      familyId: DEMO_IDS.family,
+      idempotencyKey: "same-instance-ordinary-quarantine",
+    });
+    failures.failNext({
+      after: true,
+      error: new Error("ordinary acknowledgement unavailable"),
+      key: "fovari.local-family",
+      operation: "set",
+    });
+    failures.failNext({
+      error: new Error("ordinary readback unavailable"),
+      key: "fovari.local-family",
+      operation: "get",
+    });
+
+    await expect(
+      repository.createReward(
+        {
+          eligibleChildIds: [DEMO_IDS.alex],
+          pointCost: 25,
+          title: "Committed during ordinary quarantine",
+          type: "privilege",
+        },
+        context,
+      ),
+    ).rejects.toThrow("Inconsistent local demo envelope state after ambiguous write");
+
+    const recovered = await repository.getSnapshot();
+    expect(recovered.rewards.at(-1)?.id).toBe("90000000-0000-4000-8000-000000000001");
+    await expect(
+      repository.createReward(
+        {
+          eligibleChildIds: [DEMO_IDS.alex],
+          pointCost: 25,
+          title: "Committed during ordinary quarantine",
+          type: "privilege",
+        },
+        context,
+      ),
+    ).rejects.toThrow("already processed");
+  });
+
+  it("fails same-instance actor switching closed after an ambiguous credential commit", async () => {
+    const failures = createFailureStorage();
+    const { repository } = createRepositoryWithStorage(failures.storage);
+    await repository.getSnapshot();
+    failFinalEnvelopeWriteAndReadback(failures);
+
+    await expect(
+      repository.configureChildPin(
+        { childId: DEMO_IDS.alex, pin: "2468" },
+        createCommandContext({
+          actorId: DEMO_IDS.parent,
+          familyId: DEMO_IDS.family,
+          idempotencyKey: "same-instance-configure-switch",
+        }),
+      ),
+    ).rejects.toThrow("Inconsistent local demo envelope state after ambiguous write");
+
+    await expect(
+      repository.switchActor({ childId: DEMO_IDS.alex, id: DEMO_IDS.alex, role: "child" }),
+    ).rejects.toThrow("Use child PIN unlock for this profile");
+    expect((await repository.getSnapshot()).session.kind).toBe("adult");
+  });
+
+  it("reconciles before a queued mutation can overwrite a durable credential commit", async () => {
+    const failures = createFailureStorage();
+    const { repository } = createRepositoryWithStorage(failures.storage);
+    const configureContext = createCommandContext({
+      actorId: DEMO_IDS.parent,
+      familyId: DEMO_IDS.family,
+      idempotencyKey: "queued-configure",
+    });
+    const rewardContext = createCommandContext({
+      actorId: DEMO_IDS.parent,
+      familyId: DEMO_IDS.family,
+      idempotencyKey: "queued-reward",
+    });
+    await repository.getSnapshot();
+    failFinalEnvelopeWriteAndReadback(failures);
+
+    const configure = repository.configureChildPin(
+      { childId: DEMO_IDS.alex, pin: "2468" },
+      configureContext,
+    );
+    const reward = repository.createReward(
+      {
+        eligibleChildIds: [DEMO_IDS.alex],
+        pointCost: 25,
+        title: "Queued after quarantine",
+        type: "privilege",
+      },
+      rewardContext,
+    );
+
+    await expect(configure).rejects.toThrow(
+      "Inconsistent local demo envelope state after ambiguous write",
+    );
+    const recovered = await reward;
+    expect(recovered.children.find((child) => child.id === DEMO_IDS.alex)?.pinConfigured).toBe(
+      true,
+    );
+    expect(recovered.rewards.at(-1)?.id).toBe("90000000-0000-4000-8000-000000000001");
+
+    const durable = await readLocalEnvelope(failures.storage, createDemoSeed());
+    expect(durable.processedCommandIds).toEqual(
+      expect.arrayContaining([configureContext.idempotencyKey, rewardContext.idempotencyKey]),
+    );
+    expect(durable.nextSequence).toBe(2);
+    expect(durable.pendingCredentialTransactionId).toBeUndefined();
   });
 
   it("rolls back a pending credential journal and marker during process recreation", async () => {

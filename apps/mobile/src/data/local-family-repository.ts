@@ -170,13 +170,40 @@ export function createLocalFamilyRepository(
   let envelope: LocalFamilyEnvelopeV1 | null = null;
   let hydration: Promise<void> | null = null;
   let mutationTail: Promise<void> = Promise.resolve();
+  let reconciliation: Promise<void> | null = null;
+  let reconciliationRequired = false;
 
   const ensureHydrated = async () => {
-    hydration ??= readLocalEnvelope(options.storage, options.seed).then(async (loaded) => {
-      envelope = loaded;
-      await reconcileCredentialTransaction();
-    });
-    await hydration;
+    if (!hydration) {
+      const pending = readLocalEnvelope(options.storage, options.seed).then(async (loaded) => {
+        envelope = loaded;
+        await reconcileCredentialTransaction();
+      });
+      hydration = pending;
+      try {
+        await pending;
+      } catch (error) {
+        if (hydration === pending) hydration = null;
+        throw error;
+      }
+    } else {
+      await hydration;
+    }
+
+    if (!reconciliationRequired) return;
+    const pending =
+      reconciliation ??
+      (async () => {
+        envelope = await readLocalEnvelope(options.storage, options.seed);
+        await reconcileCredentialTransaction();
+        reconciliationRequired = false;
+      })();
+    reconciliation = pending;
+    try {
+      await pending;
+    } finally {
+      if (reconciliation === pending) reconciliation = null;
+    }
   };
 
   const current = () => {
@@ -212,6 +239,7 @@ export function createLocalFamilyRepository(
       (error: unknown) => ({ error, ok: false as const }),
     );
     if (!readback.ok) {
+      reconciliationRequired = true;
       throw inconsistentEnvelopeWrite(write.error, readback.error);
     }
     if (envelopesEqual(readback.value, candidate)) {
@@ -222,6 +250,7 @@ export function createLocalFamilyRepository(
       envelope = prior;
       throw write.error;
     }
+    reconciliationRequired = true;
     throw inconsistentEnvelopeWrite(
       write.error,
       new Error("Envelope readback matched neither prior nor candidate state."),
@@ -839,6 +868,7 @@ export function createLocalFamilyRepository(
     async getSnapshot() {
       await ensureHydrated();
       await mutationTail;
+      await ensureHydrated();
       return copy(current().snapshot);
     },
 
