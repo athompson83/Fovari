@@ -40,6 +40,7 @@ export interface ChildPinVaultCheckpoint {
 export interface ChildPinVault {
   beginTransaction(childIds?: readonly string[]): Promise<string>;
   checkpoint(childIds?: readonly string[]): Promise<ChildPinVaultCheckpoint>;
+  clearManagedCredentials(): Promise<void>;
   finalizeTransaction(transactionId: string): Promise<void>;
   getPendingTransactionId(): Promise<string | null>;
   isConfigured(childId: string): Promise<boolean>;
@@ -447,6 +448,34 @@ export function createChildPinVault(options: ChildPinVaultOptions = {}): ChildPi
   return {
     beginTransaction,
     checkpoint: createCheckpoint,
+    async clearManagedCredentials() {
+      const managedChildIds = await readManagedChildIds();
+      const pendingTransaction = await readPendingTransaction();
+      const childIds = [
+        ...new Set([
+          ...managedChildIds,
+          ...(pendingTransaction?.credentials.map((credential) => credential.childId) ?? []),
+        ]),
+      ];
+      for (const childId of childIds) {
+        await writeStorageValue(keyFor(childId), null);
+      }
+      await writeStorageValue(PIN_REGISTRY_KEY, null);
+      await writeStorageValue(PIN_TRANSACTION_KEY, null);
+
+      const storage = resolveStorage();
+      for (const childId of childIds) {
+        if ((await storage.getItem(keyFor(childId))) !== null) {
+          throw new Error("Synthetic child PIN recovery cleanup could not be verified.");
+        }
+      }
+      if (
+        (await storage.getItem(PIN_REGISTRY_KEY)) !== null ||
+        (await storage.getItem(PIN_TRANSACTION_KEY)) !== null
+      ) {
+        throw new Error("Synthetic child PIN recovery cleanup could not be verified.");
+      }
+    },
     finalizeTransaction,
     async getPendingTransactionId() {
       return (await readPendingTransaction())?.id ?? null;

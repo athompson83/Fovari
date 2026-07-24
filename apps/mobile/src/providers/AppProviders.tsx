@@ -11,11 +11,12 @@ import {
 } from "../data/child-pin-vault";
 import { createDemoSeed } from "../data/fixtures";
 import { createLocalFamilyRepository } from "../data/local-family-repository";
-import { asyncStorage } from "../data/local-storage";
+import { asyncStorage, clearLocalEnvelope } from "../data/local-storage";
 import { createFamilyStore, type FamilyStore, type FamilyStoreState } from "../store/family-store";
 
 interface AppServices {
   familyStore: FamilyStore;
+  recoverLocalData(): Promise<void>;
   repository: FamilyRepository;
 }
 
@@ -36,8 +37,17 @@ export function AppProviders({ children }: PropsWithChildren) {
       seed: createDemoSeed(),
       storage,
     });
+    const familyStore = createFamilyStore(repository);
     services.current = {
-      familyStore: createFamilyStore(repository),
+      familyStore,
+      async recoverLocalData() {
+        await pinVault.clearManagedCredentials();
+        await clearLocalEnvelope(storage);
+        await familyStore.getState().initialize();
+        if (familyStore.getState().status !== "ready") {
+          throw new Error("The local family could not be restarted after cleanup.");
+        }
+      },
       repository,
     };
   }

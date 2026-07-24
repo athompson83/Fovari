@@ -9,6 +9,7 @@ import type { OfflineAction } from "./offline-queue";
 const STORAGE_KEY = "fovari.local-family";
 const MAX_COLLECTION_SIZE = 500;
 const MAX_INTEGER = 1_000_000_000;
+const MAX_NESTING_DEPTH = 64;
 const MAX_SERIALIZED_LENGTH = 1_000_000;
 const MAX_STRING_LENGTH = 4_096;
 
@@ -113,6 +114,11 @@ const hasStringFields = (record: Record<string, unknown>, fields: readonly strin
 const hasOptionalStringFields = (record: Record<string, unknown>, fields: readonly string[]) =>
   fields.every((field) => isOptionalString(record[field]));
 
+const hasOnlyFields = (record: Record<string, unknown>, fields: readonly string[]) => {
+  const allowed = new Set(fields);
+  return Object.keys(record).every((field) => allowed.has(field));
+};
+
 const isStringRecord = (value: unknown) =>
   isRecord(value) &&
   Object.keys(value).length <= MAX_COLLECTION_SIZE &&
@@ -124,14 +130,94 @@ const isBooleanRecord = (value: unknown) =>
   Object.entries(value).every(([key, entry]) => isString(key) && isBoolean(entry));
 
 const isNotificationPreferences = (value: unknown) =>
+  isRecord(value) &&
+  hasOnlyFields(value, [
+    "approvalUpdates",
+    "childEncouragement",
+    "enabled",
+    "quietHoursEnd",
+    "quietHoursStart",
+    "weeklySummary",
+  ]) &&
   NotificationPreferencesSchema.safeParse(value).success;
 
 const isLocalEnvelopeError = () =>
   new Error("Invalid local family data. Reset the synthetic family to continue.");
 
+const credentialKeyTokens = (key: string) =>
+  key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+
+const isCredentialLikeKey = (key: string) =>
+  /pin|passcode|password|secret|credential|authcode/.test(credentialKeyTokens(key).join(""));
+
+const isAllowedCredentialMetadataPath = (path: readonly string[], key: string) => {
+  if (path.length === 0 && (key === "pendingCredentialTransactionId" || key === "pinAttempts")) {
+    return true;
+  }
+  if (
+    key === "pinConfigured" &&
+    path.length === 3 &&
+    path[0] === "snapshot" &&
+    path[1] === "children" &&
+    path[2] === "*"
+  ) {
+    return true;
+  }
+  return (
+    key === "pinRequested" &&
+    path.length === 4 &&
+    path[0] === "snapshot" &&
+    path[1] === "onboardingDraft" &&
+    path[2] === "childDrafts" &&
+    path[3] === "*"
+  );
+};
+
+function hasNoRawCredentialFields(value: unknown): boolean {
+  const stack: { path: readonly string[]; value: unknown }[] = [{ path: [], value }];
+
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (!isRecord(current.value) && !Array.isArray(current.value)) continue;
+    if (current.path.length > MAX_NESTING_DEPTH) return false;
+
+    if (Array.isArray(current.value)) {
+      for (const item of current.value) {
+        stack.push({ path: [...current.path, "*"], value: item });
+      }
+      continue;
+    }
+
+    for (const [key, entry] of Object.entries(current.value)) {
+      if (isCredentialLikeKey(key) && !isAllowedCredentialMetadataPath(current.path, key)) {
+        return false;
+      }
+      stack.push({ path: [...current.path, key], value: entry });
+    }
+  }
+  return true;
+}
+
 function isOfflineAction(value: unknown): value is OfflineAction {
   if (
     !isRecord(value) ||
+    !hasOnlyFields(value, [
+      "actorId",
+      "attemptCount",
+      "commandType",
+      "completedAt",
+      "createdAt",
+      "entityId",
+      "idempotencyKey",
+      "lastAttemptAt",
+      "lastError",
+      "payload",
+      "status",
+    ]) ||
     !hasStringFields(value, ["actorId", "createdAt", "entityId", "idempotencyKey"])
   ) {
     return false;
@@ -153,6 +239,7 @@ function isPinAttempts(value: unknown): value is LocalFamilyEnvelopeV1["pinAttem
       ([childId, attempt]) =>
         isString(childId) &&
         isRecord(attempt) &&
+        hasOnlyFields(attempt, ["failures", "lockedUntil"]) &&
         isInteger(attempt.failures) &&
         (attempt.lockedUntil === undefined || isInteger(attempt.lockedUntil)),
     )
@@ -162,6 +249,28 @@ function isPinAttempts(value: unknown): value is LocalFamilyEnvelopeV1["pinAttem
 function isSnapshot(value: unknown): value is FamilySnapshot {
   if (!isRecord(value)) return false;
   if (
+    !hasOnlyFields(value, [
+      "achievements",
+      "activeActor",
+      "activeChildId",
+      "adult",
+      "calendar",
+      "children",
+      "completions",
+      "familyId",
+      "familyName",
+      "goals",
+      "ledger",
+      "notificationPreferences",
+      "onboarding",
+      "onboardingDraft",
+      "pointsName",
+      "redemptions",
+      "rewards",
+      "selectedRewardByChild",
+      "session",
+      "timezone",
+    ]) ||
     !hasStringFields(value, ["familyId", "pointsName", "timezone"]) ||
     !isPossiblyEmptyString(value.familyName) ||
     !isPossiblyEmptyString(value.activeChildId) ||
@@ -175,6 +284,7 @@ function isSnapshot(value: unknown): value is FamilySnapshot {
     !isBoundedArray(value.rewards) ||
     !isStringRecord(value.selectedRewardByChild) ||
     !isRecord(value.adult) ||
+    !hasOnlyFields(value.adult, ["displayName", "id"]) ||
     !hasStringFields(value.adult, ["id", "displayName"]) ||
     !isRecord(value.notificationPreferences) ||
     !isRecord(value.onboarding) ||
@@ -189,6 +299,18 @@ function isSnapshot(value: unknown): value is FamilySnapshot {
     !value.children.every((child) => {
       if (
         !isRecord(child) ||
+        !hasOnlyFields(child, [
+          "avatarKey",
+          "completedToday",
+          "experienceMode",
+          "id",
+          "level",
+          "name",
+          "pinConfigured",
+          "points",
+          "streakDays",
+          "totalToday",
+        ]) ||
         !hasStringFields(child, ["id", "name", "avatarKey"]) ||
         !experienceModes.has(child.experienceMode as string) ||
         !isBoolean(child.pinConfigured) ||
@@ -218,6 +340,19 @@ function isSnapshot(value: unknown): value is FamilySnapshot {
     !value.goals.every((goal) => {
       if (
         !isRecord(goal) ||
+        !hasOnlyFields(goal, [
+          "category",
+          "childId",
+          "dueLabel",
+          "id",
+          "instructions",
+          "pointValue",
+          "progressCurrent",
+          "progressTarget",
+          "status",
+          "title",
+          "verification",
+        ]) ||
         !hasStringFields(goal, [
           "id",
           "childId",
@@ -248,6 +383,7 @@ function isSnapshot(value: unknown): value is FamilySnapshot {
     !value.rewards.every((reward) => {
       if (
         !isRecord(reward) ||
+        !hasOnlyFields(reward, ["accent", "emoji", "id", "pointCost", "title", "type"]) ||
         !hasStringFields(reward, ["id", "accent", "emoji", "title"]) ||
         !rewardTypes.has(reward.type as string) ||
         !isInteger(reward.pointCost) ||
@@ -269,6 +405,14 @@ function isSnapshot(value: unknown): value is FamilySnapshot {
     !value.achievements.every(
       (achievement) =>
         isRecord(achievement) &&
+        hasOnlyFields(achievement, [
+          "childId",
+          "description",
+          "earnedOn",
+          "emoji",
+          "id",
+          "title",
+        ]) &&
         hasStringFields(achievement, [
           "id",
           "childId",
@@ -282,12 +426,22 @@ function isSnapshot(value: unknown): value is FamilySnapshot {
     !value.calendar.every(
       (item) =>
         isRecord(item) &&
+        hasOnlyFields(item, ["childId", "color", "icon", "id", "timeLabel", "title"]) &&
         hasStringFields(item, ["id", "color", "icon", "timeLabel", "title"]) &&
         (item.childId === undefined || (isString(item.childId) && childIds.has(item.childId))),
     ) ||
     !value.completions.every(
       (completion) =>
         isRecord(completion) &&
+        hasOnlyFields(completion, [
+          "childId",
+          "childNote",
+          "durationSeconds",
+          "goalId",
+          "id",
+          "status",
+          "submittedAt",
+        ]) &&
         hasStringFields(completion, ["id", "childId", "goalId", "submittedAt"]) &&
         isOptionalString(completion.childNote) &&
         (completion.durationSeconds === undefined || isInteger(completion.durationSeconds)) &&
@@ -298,6 +452,16 @@ function isSnapshot(value: unknown): value is FamilySnapshot {
     !value.ledger.every(
       (entry) =>
         isRecord(entry) &&
+        hasOnlyFields(entry, [
+          "amount",
+          "childId",
+          "description",
+          "id",
+          "idempotencyKey",
+          "occurredAt",
+          "reversesTransactionId",
+          "type",
+        ]) &&
         hasStringFields(entry, ["id", "childId", "idempotencyKey", "description", "occurredAt"]) &&
         isOptionalString(entry.reversesTransactionId) &&
         childIds.has(entry.childId as string) &&
@@ -308,6 +472,7 @@ function isSnapshot(value: unknown): value is FamilySnapshot {
     !value.redemptions.every(
       (redemption) =>
         isRecord(redemption) &&
+        hasOnlyFields(redemption, ["childId", "id", "pointCost", "rewardId", "status"]) &&
         hasStringFields(redemption, ["id", "childId", "rewardId"]) &&
         childIds.has(redemption.childId as string) &&
         rewardIds.has(redemption.rewardId as string) &&
@@ -324,6 +489,7 @@ function isSnapshot(value: unknown): value is FamilySnapshot {
 
   const onboarding = value.onboarding;
   if (
+    !hasOnlyFields(onboarding, ["completedSteps", "currentStep", "status"]) ||
     !isBoundedArray(onboarding.completedSteps) ||
     !onboarding.completedSteps.every((step) => onboardingSteps.has(step as string)) ||
     !onboardingCurrentSteps.has(onboarding.currentStep as string) ||
@@ -338,6 +504,7 @@ function isSnapshot(value: unknown): value is FamilySnapshot {
 
   const actor = value.activeActor;
   if (
+    !hasOnlyFields(actor, ["childId", "id", "permissions", "role"]) ||
     !hasStringFields(actor, ["id"]) ||
     !familyRoles.has(actor.role as string) ||
     (actor.permissions !== undefined && !isBooleanRecord(actor.permissions)) ||
@@ -373,6 +540,16 @@ function isSnapshot(value: unknown): value is FamilySnapshot {
 function isOnboardingDraft(value: unknown): boolean {
   if (
     !isRecord(value) ||
+    !hasOnlyFields(value, [
+      "adultDisplayName",
+      "childDrafts",
+      "familyName",
+      "notificationPreferences",
+      "pointsName",
+      "selectedStarterGoalIds",
+      "selectedStarterRewardIds",
+      "timezone",
+    ]) ||
     !hasStringFields(value, ["adultDisplayName", "pointsName", "timezone"]) ||
     !isPossiblyEmptyString(value.familyName)
   ) {
@@ -385,13 +562,28 @@ function isOnboardingDraft(value: unknown): boolean {
     isBoundedArray(value.selectedStarterRewardIds) &&
     value.selectedStarterGoalIds.every(isString) &&
     value.selectedStarterRewardIds.every(isString) &&
-    value.childDrafts.every((child) => OnboardingChildDraftSchema.safeParse(child).success)
+    value.childDrafts.every(
+      (child) =>
+        isRecord(child) &&
+        hasOnlyFields(child, ["clientId", "displayName", "experienceMode", "pinRequested"]) &&
+        OnboardingChildDraftSchema.safeParse(child).success,
+    )
   );
 }
 
 function isEnvelope(value: unknown): value is LocalFamilyEnvelopeV1 {
   if (
     !isRecord(value) ||
+    !hasOnlyFields(value, [
+      "nextSequence",
+      "offlineActions",
+      "pendingCredentialTransactionId",
+      "pinAttempts",
+      "processedCommandIds",
+      "snapshot",
+      "version",
+    ]) ||
+    !hasNoRawCredentialFields(value) ||
     value.version !== 1 ||
     !isInteger(value.nextSequence, 1) ||
     !isBoundedArray(value.offlineActions) ||
@@ -457,6 +649,13 @@ export function createMemoryStorage(
       values.set(key, value);
     },
   };
+}
+
+export async function clearLocalEnvelope(storage: KeyValueStorage): Promise<void> {
+  await storage.removeItem(STORAGE_KEY);
+  if ((await storage.getItem(STORAGE_KEY)) !== null) {
+    throw new Error("Local family recovery cleanup could not be verified.");
+  }
 }
 
 export async function readLocalEnvelope(

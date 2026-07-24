@@ -6,6 +6,7 @@ import { colors, getAgeModeTokens, radii, spacing } from "@fovari/design-system"
 
 import { Button } from "../../../src/components/Button";
 import { Card } from "../../../src/components/Card";
+import { EmptyState } from "../../../src/components/EmptyState";
 import { FormField } from "../../../src/components/FormField";
 import { LoadingState } from "../../../src/components/LoadingState";
 import { PageHeader } from "../../../src/components/PageHeader";
@@ -41,10 +42,29 @@ function GoalDetailContent() {
   const [note, setNote] = useState("");
   const [timerStarted, setTimerStarted] = useState(false);
   if (!snapshot) return <LoadingState />;
-  const child =
-    snapshot.children.find((item) => item.id === snapshot.activeChildId) ?? snapshot.children[0];
-  const goal = snapshot.goals.find((item) => item.id === occurrenceId);
-  if (!child || !goal) return <LoadingState />;
+  const child = snapshot.children.find((item) => item.id === snapshot.activeChildId);
+  const goal = snapshot.goals.find(
+    (item) => item.id === occurrenceId && item.childId === child?.id,
+  );
+  if (!child || !goal) {
+    return (
+      <Screen>
+        <PageHeader
+          actionLabel="Back"
+          onAction={() => router.back()}
+          subtitle="This goal is not available for the active profile."
+          title="Goal details"
+        />
+        <EmptyState
+          actionLabel="Back to goals"
+          description="Choose a goal from your own goal list to continue safely."
+          emoji="ðŸ§­"
+          onAction={() => router.replace("/(child)/(tabs)/goals")}
+          title="Goal not found"
+        />
+      </Screen>
+    );
+  }
   const mode = getAgeModeTokens(child.experienceMode);
 
   const submit = async () => {

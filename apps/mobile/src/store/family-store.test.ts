@@ -14,6 +14,7 @@ const createTestRepository = () =>
       async checkpoint() {
         return { kind: "opaque-child-pin-vault-checkpoint" };
       },
+      async clearManagedCredentials() {},
       async finalizeTransaction() {},
       async getPendingTransactionId() {
         return null;
@@ -56,5 +57,50 @@ describe("family store", () => {
 
     expect(store.getState().snapshot).toEqual(confirmed);
     expect(store.getState().snapshot).not.toBe(confirmed);
+  });
+
+  it.each([
+    ["malformed JSON", "{", "Invalid local family data"],
+    ["an unsupported envelope", JSON.stringify({ version: 99 }), "Unsupported local family data"],
+  ])("exposes initialization failure for %s", async (_label, serialized, expectedError) => {
+    const repository = createLocalFamilyRepository({
+      pinVault: {
+        async beginTransaction() {
+          return "pin-tx-test";
+        },
+        async checkpoint() {
+          return { kind: "opaque-child-pin-vault-checkpoint" };
+        },
+        async clearManagedCredentials() {},
+        async finalizeTransaction() {},
+        async getPendingTransactionId() {
+          return null;
+        },
+        async isConfigured() {
+          return false;
+        },
+        async listManagedChildIds() {
+          return [];
+        },
+        async remove() {},
+        async rollbackTransaction() {},
+        async restore() {},
+        async set() {},
+        async verify() {
+          return false;
+        },
+      },
+      seed: createDemoSeed(),
+      storage: createMemoryStorage({ "fovari.local-family": serialized }),
+    });
+    const store = createFamilyStore(repository);
+
+    await store.getState().initialize();
+
+    expect(store.getState()).toMatchObject({
+      error: expect.stringContaining(expectedError),
+      snapshot: null,
+      status: "error",
+    });
   });
 });

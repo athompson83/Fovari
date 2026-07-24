@@ -87,6 +87,28 @@ describe("child PIN vault", () => {
     });
   });
 
+  it("clears every managed credential and the durable journal for explicit local recovery", async () => {
+    const storage = createMemoryStorage();
+    let salt = 0;
+    const vault = createChildPinVault({
+      digest: opaqueDigest,
+      randomId: () => `recovery-${++salt}`,
+      storage,
+    });
+    await vault.set("child-one", "2468");
+    await vault.set("child-two", "1357");
+    await vault.beginTransaction(["child-one", "child-two"]);
+
+    await vault.clearManagedCredentials();
+
+    expect(await storage.getItem("fovari.child-pin.child-one")).toBeNull();
+    expect(await storage.getItem("fovari.child-pin.child-two")).toBeNull();
+    expect(await storage.getItem("fovari.child-pin.registry")).toBeNull();
+    expect(await storage.getItem("fovari.child-pin.pending-transaction")).toBeNull();
+    expect(await vault.listManagedChildIds()).toEqual([]);
+    expect(await vault.getPendingTransactionId()).toBeNull();
+  });
+
   it("persists an opaque credential transaction journal that a new vault can roll back", async () => {
     const storage = createMemoryStorage();
     let salt = 0;
