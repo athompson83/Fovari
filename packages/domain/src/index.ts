@@ -1,6 +1,19 @@
 export const FOVARI_DOMAIN_VERSION = 1 as const;
 
 export { resolveExperienceMode } from "./family/age-mode";
+export { attemptChildUnlock } from "./family/child-unlock";
+export type { ChildUnlockDecision, ChildUnlockInput } from "./family/child-unlock";
+export {
+  completeOnboardingStep,
+  createOnboardingState,
+  ONBOARDING_STEPS,
+} from "./family/onboarding";
+export type {
+  OnboardingError,
+  OnboardingState,
+  OnboardingStatus,
+  OnboardingStep,
+} from "./family/onboarding";
 export { can } from "./family/permissions";
 export type { FamilyActor, FamilyPermission } from "./family/permissions";
 export type { ExperienceMode, FamilyRole } from "./family/types";
