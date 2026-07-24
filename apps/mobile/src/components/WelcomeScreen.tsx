@@ -11,6 +11,8 @@ export interface WelcomeScreenProps {
   onCreateAccount(): void;
   onDemo(): void;
   onOpenLink(label: "Privacy" | "Support" | "Terms"): void;
+  onReturn?: () => void;
+  returningFamilyName?: string;
 }
 
 const benefits = [
@@ -26,7 +28,13 @@ const modes = [
   { accent: "#24335F", age: "15–17", emoji: "🚀", label: "Launch" },
 ] as const;
 
-export function WelcomeScreen({ onCreateAccount, onDemo, onOpenLink }: WelcomeScreenProps) {
+export function WelcomeScreen({
+  onCreateAccount,
+  onDemo,
+  onOpenLink,
+  onReturn,
+  returningFamilyName,
+}: WelcomeScreenProps) {
   const { width } = useWindowDimensions();
   const wide = width >= 820;
 
@@ -48,6 +56,15 @@ export function WelcomeScreen({ onCreateAccount, onDemo, onOpenLink }: WelcomeSc
             matter—without turning family life into a scoreboard.
           </Text>
           <View style={styles.actions}>
+            {returningFamilyName && onReturn ? (
+              <Button
+                accessibilityLabel={`Continue with ${returningFamilyName}`}
+                onPress={onReturn}
+                style={styles.returningAction}
+              >
+                Continue with {returningFamilyName}
+              </Button>
+            ) : null}
             <Button
               accessibilityLabel="Explore the family demo"
               onPress={onDemo}
@@ -421,6 +438,9 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "800",
     marginTop: spacing.xs,
+  },
+  returningAction: {
+    flexBasis: "100%",
   },
   screenContent: {
     backgroundColor: colors.background,

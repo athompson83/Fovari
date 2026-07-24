@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { WelcomeScreen } from "./WelcomeScreen";
 
 describe("Fovari welcome", () => {
+  afterEach(cleanup);
   it("communicates the family promise and provides a working demo entry", () => {
     const onCreateAccount = vi.fn();
     const onDemo = vi.fn();
@@ -29,5 +30,22 @@ describe("Fovari welcome", () => {
     expect(onDemo).toHaveBeenCalledTimes(1);
     expect(onCreateAccount).toHaveBeenCalledTimes(1);
     expect(onOpenLink).toHaveBeenCalledWith("Privacy");
+  });
+
+  it("offers a returning family a direct continuation path", () => {
+    const onReturn = vi.fn();
+    render(
+      <WelcomeScreen
+        onCreateAccount={vi.fn()}
+        onDemo={vi.fn()}
+        onOpenLink={vi.fn()}
+        onReturn={onReturn}
+        returningFamilyName="The Park Family"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue with The Park Family" }));
+
+    expect(onReturn).toHaveBeenCalledTimes(1);
   });
 });

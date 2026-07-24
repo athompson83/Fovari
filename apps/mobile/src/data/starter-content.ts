@@ -1,3 +1,20 @@
+export interface StarterGoalDefinition {
+  category: "chores" | "reading";
+  emoji: string;
+  id: string;
+  instructions: string;
+  pointValue: number;
+  title: string;
+}
+
+export interface StarterRewardDefinition {
+  emoji: string;
+  id: string;
+  pointCost: number;
+  title: string;
+  type: "experience" | "privilege";
+}
+
 export const STARTER_GOALS = [
   {
     category: "reading",
@@ -15,7 +32,7 @@ export const STARTER_GOALS = [
     pointValue: 5,
     title: "Tidy up",
   },
-] as const;
+] as const satisfies readonly StarterGoalDefinition[];
 
 export const STARTER_REWARDS = [
   {
@@ -32,4 +49,4 @@ export const STARTER_REWARDS = [
     title: "30 minutes game time",
     type: "privilege" as const,
   },
-] as const;
+] as const satisfies readonly StarterRewardDefinition[];
