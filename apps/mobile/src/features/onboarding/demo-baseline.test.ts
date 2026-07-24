@@ -47,18 +47,30 @@ describe("isUntouchedDemoSnapshot", () => {
       },
       field: "completions",
     },
+    {
+      change: () => {
+        const seed = createDemoSeed();
+        return {
+          ...seed,
+          selectedRewardByChild: {
+            ...seed.selectedRewardByChild,
+            [seed.children[0]!.id]: seed.rewards[0]!.id,
+          },
+        };
+      },
+      field: "selected rewards",
+    },
   ])("treats a $field-only change as persisted custom state", ({ change }) => {
     expect(isUntouchedDemoSnapshot(change())).toBe(false);
   });
 
-  it("ignores only transient session, actor, and active-selection changes", () => {
+  it("ignores only transient session, actor, and active-child changes", () => {
     const seed = createDemoSeed();
     expect(
       isUntouchedDemoSnapshot({
         ...seed,
         activeActor: { id: seed.children[1]!.id, role: "child" },
         activeChildId: seed.children[1]!.id,
-        selectedRewardByChild: {},
         session: {
           actorId: seed.children[1]!.id,
           childId: seed.children[1]!.id,

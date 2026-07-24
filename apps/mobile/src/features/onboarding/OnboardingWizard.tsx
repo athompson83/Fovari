@@ -15,6 +15,11 @@ import {
   type OnboardingState,
   type OnboardingStep,
 } from "@fovari/domain";
+import {
+  CreateFamilySchema,
+  NotificationPreferencesSchema,
+  OnboardingChildDraftSchema,
+} from "@fovari/validation";
 
 import { Button } from "../../components/Button";
 import { Card } from "../../components/Card";
@@ -81,7 +86,16 @@ const normalizeOnboardingResume = (
   initialOnboarding?: OnboardingState | null,
 ): NormalizedResume => {
   const source = structuredClone(initialOnboarding ?? createOnboardingState());
-  const draft = structuredClone(initialDraft ?? createDefaultOnboardingDraft());
+  const sourceDraft = structuredClone(initialDraft ?? createDefaultOnboardingDraft());
+  const draft: OnboardingDraft = {
+    ...sourceDraft,
+    childDrafts: sourceDraft.childDrafts.map((child) => ({
+      clientId: child.clientId,
+      displayName: child.displayName,
+      experienceMode: child.experienceMode,
+      pinRequested: child.pinRequested,
+    })),
+  };
   const claimedIndex =
     source.currentStep === "complete"
       ? ONBOARDING_STEPS.length
@@ -123,17 +137,34 @@ const normalizeOnboardingResume = (
   );
   const staleGoal = selectedStarterGoalIds.length !== draft.selectedStarterGoalIds.length;
   const staleReward = selectedStarterRewardIds.length !== draft.selectedStarterRewardIds.length;
-  const goalStepIndex = ONBOARDING_STEPS.indexOf("starter_goals");
-  const rewardStepIndex = ONBOARDING_STEPS.indexOf("starter_rewards");
-  const goalNeedsCorrection =
-    (staleGoal && safeIndex >= goalStepIndex) ||
-    (selectedStarterGoalIds.length === 0 && safeIndex > goalStepIndex);
-  const rewardNeedsCorrection =
-    (staleReward && safeIndex >= rewardStepIndex) ||
-    (selectedStarterRewardIds.length === 0 && safeIndex > rewardStepIndex);
-
-  if (goalNeedsCorrection) safeIndex = Math.min(safeIndex, goalStepIndex);
-  else if (rewardNeedsCorrection) safeIndex = Math.min(safeIndex, rewardStepIndex);
+  const completedPrerequisitesValid: Readonly<Record<WizardStep, boolean>> = {
+    adult: draft.adultDisplayName.trim().length > 0 && draft.adultDisplayName.trim().length <= 40,
+    children:
+      draft.childDrafts.length > 0 &&
+      draft.childDrafts.every((child) => OnboardingChildDraftSchema.safeParse(child).success),
+    family: CreateFamilySchema.safeParse({
+      name: draft.familyName,
+      pointsName: draft.pointsName,
+      timezone: draft.timezone,
+    }).success,
+    notifications: NotificationPreferencesSchema.safeParse(draft.notificationPreferences).success,
+    review: true,
+    starter_goals: !staleGoal && selectedStarterGoalIds.length > 0,
+    starter_rewards: !staleReward && selectedStarterRewardIds.length > 0,
+  };
+  let invalidPrerequisite = false;
+  for (let index = 0; index < safeIndex; index += 1) {
+    const completedStep = ONBOARDING_STEPS[index];
+    if (
+      completedStep &&
+      isWizardStep(completedStep) &&
+      !completedPrerequisitesValid[completedStep]
+    ) {
+      safeIndex = index;
+      invalidPrerequisite = true;
+      break;
+    }
+  }
 
   const onboarding = canonicalOnboardingAt(safeIndex);
   const step = isWizardStep(onboarding.currentStep) ? onboarding.currentStep : "review";
@@ -144,7 +175,7 @@ const normalizeOnboardingResume = (
       selectedStarterRewardIds,
     },
     notice:
-      !ledgerValid || staleGoal || staleReward || goalNeedsCorrection || rewardNeedsCorrection
+      !ledgerValid || staleGoal || staleReward || invalidPrerequisite
         ? "We repaired your saved setup and returned you to the earliest step that needs review. Your entered family details were kept."
         : null,
     onboarding,
@@ -500,6 +531,15 @@ export function OnboardingWizard({
                 onChangeText={(pointsName) => updateDraft({ pointsName })}
                 value={draft.pointsName}
               />
+              <FormField
+                accessibilityState={{ disabled: locked }}
+                autoCapitalize="none"
+                editable={!locked}
+                label="Family timezone"
+                onChangeText={(timezone) => updateDraft({ timezone })}
+                placeholder="Example: America/New_York"
+                value={draft.timezone}
+              />
             </>
           ) : null}
 
@@ -679,6 +719,38 @@ export function OnboardingWizard({
                     },
                   })
                 }
+              />
+              <FormField
+                accessibilityState={{ disabled: locked }}
+                autoCapitalize="none"
+                editable={!locked}
+                label="Quiet hours start"
+                onChangeText={(quietHoursStart) =>
+                  updateDraft({
+                    notificationPreferences: {
+                      ...draft.notificationPreferences,
+                      quietHoursStart,
+                    },
+                  })
+                }
+                placeholder="20:00"
+                value={draft.notificationPreferences.quietHoursStart}
+              />
+              <FormField
+                accessibilityState={{ disabled: locked }}
+                autoCapitalize="none"
+                editable={!locked}
+                label="Quiet hours end"
+                onChangeText={(quietHoursEnd) =>
+                  updateDraft({
+                    notificationPreferences: {
+                      ...draft.notificationPreferences,
+                      quietHoursEnd,
+                    },
+                  })
+                }
+                placeholder="07:00"
+                value={draft.notificationPreferences.quietHoursEnd}
               />
             </>
           ) : null}

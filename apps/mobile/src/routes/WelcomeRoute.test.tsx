@@ -147,6 +147,48 @@ describe("WelcomeRoute", () => {
     expect(mocks.replace).toHaveBeenCalledWith("/(parent)/(tabs)/family");
   });
 
+  it.each([
+    {
+      action: "Create family account",
+      confirmation: "Start over with a new family?",
+    },
+    {
+      action: "Explore the family demo",
+      confirmation: "Replace your local family?",
+    },
+  ])(
+    "requires confirmation before $action when only a selected reward changed",
+    ({ action, confirmation }) => {
+      const seed = createDemoSeed();
+      const snapshot = {
+        ...seed,
+        selectedRewardByChild: {
+          ...seed.selectedRewardByChild,
+          [seed.children[0]!.id]: seed.rewards[0]!.id,
+        },
+      };
+      mocks.useFamilySnapshot.mockReturnValue(snapshot);
+      mocks.useFamilyAction.mockReturnValue({
+        busy: false,
+        repository: {
+          beginFamilySetup: vi.fn(),
+          resetDemo: vi.fn(),
+          signInAdult: vi.fn(),
+        },
+        run: (operation: () => Promise<unknown>) => operation(),
+      });
+
+      render(<WelcomeRoute />);
+      fireEvent.click(screen.getByRole("button", { name: action }));
+
+      expect(Alert.alert).toHaveBeenCalledWith(
+        confirmation,
+        expect.stringContaining("replace"),
+        expect.any(Array),
+      );
+    },
+  );
+
   it("starts from the untouched demo in order and navigates only after setup succeeds", async () => {
     const events: string[] = [];
     const snapshot = createDemoSeed();

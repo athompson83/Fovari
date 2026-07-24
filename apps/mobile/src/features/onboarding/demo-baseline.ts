@@ -31,6 +31,7 @@ const meaningfulSnapshot = (snapshot: FamilySnapshot) => {
     pointsName: snapshot.pointsName,
     redemptions: snapshot.redemptions,
     rewards: snapshot.rewards,
+    selectedRewardByChild: snapshot.selectedRewardByChild,
     timezone: snapshot.timezone,
   });
 };

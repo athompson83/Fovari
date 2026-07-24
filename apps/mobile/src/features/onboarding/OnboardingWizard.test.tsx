@@ -4,6 +4,8 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { OnboardingDraft } from "@fovari/api-client";
+
 import { createDemoSeed } from "../../data/fixtures";
 import { createDefaultOnboardingDraft, OnboardingWizard } from "./OnboardingWizard";
 
@@ -569,11 +571,223 @@ describe("OnboardingWizard", () => {
     expect(screen.getByText("Choose a starter reward")).toBeInTheDocument();
     expect(screen.getByText(/We repaired your saved setup/)).toBeInTheDocument();
   });
+
+  it.each([
+    {
+      change: (draft: OnboardingDraft) => ({ ...draft, adultDisplayName: " " }),
+      invalid: "adult",
+      step: "adult",
+      stepNumber: 1,
+    },
+    {
+      change: (draft: OnboardingDraft) => ({ ...draft, familyName: " " }),
+      invalid: "family name",
+      step: "family",
+      stepNumber: 2,
+    },
+    {
+      change: (draft: OnboardingDraft) => ({ ...draft, pointsName: " " }),
+      invalid: "points name",
+      step: "family",
+      stepNumber: 2,
+    },
+    {
+      change: (draft: OnboardingDraft) => ({ ...draft, timezone: "Eastern" }),
+      invalid: "timezone",
+      step: "family",
+      stepNumber: 2,
+    },
+    {
+      change: (draft: OnboardingDraft) => ({ ...draft, childDrafts: [] }),
+      invalid: "empty children",
+      step: "children",
+      stepNumber: 3,
+    },
+    {
+      change: (draft: OnboardingDraft) => ({
+        ...draft,
+        childDrafts: [
+          {
+            ...draft.childDrafts[0]!,
+            experienceMode: "invalid-mode" as "explorer",
+          },
+        ],
+      }),
+      invalid: "invalid child",
+      step: "children",
+      stepNumber: 3,
+    },
+    {
+      change: (draft: OnboardingDraft) => ({
+        ...draft,
+        notificationPreferences: {
+          ...draft.notificationPreferences,
+          quietHoursStart: "25:00",
+        },
+      }),
+      invalid: "notifications",
+      step: "notifications",
+      stepNumber: 6,
+    },
+  ])(
+    "rewinds a later resume to the earliest invalid $invalid prerequisite",
+    async ({ change, invalid, step, stepNumber }) => {
+      const saveOnboardingDraft = vi.fn().mockResolvedValue(createDemoSeed());
+      const base = createDefaultDraftForReview();
+      const childWithRawPin = {
+        ...base.childDrafts[0]!,
+        pin: "2468",
+      };
+      const initialDraft = change({
+        ...base,
+        childDrafts: [childWithRawPin],
+      });
+
+      render(
+        <OnboardingWizard
+          busy={false}
+          completeFamilySetup={vi.fn()}
+          error={null}
+          initialDraft={initialDraft}
+          initialOnboarding={{
+            completedSteps: [
+              "adult",
+              "family",
+              "children",
+              "starter_goals",
+              "starter_rewards",
+              "notifications",
+            ],
+            currentStep: "review",
+            status: "in_progress",
+          }}
+          saveOnboardingDraft={saveOnboardingDraft}
+        />,
+      );
+
+      expect(screen.getByRole("progressbar")).toHaveAttribute(
+        "aria-label",
+        `Onboarding step ${stepNumber} of 7`,
+      );
+      expect(screen.getByText(/We repaired your saved setup/)).toBeInTheDocument();
+
+      if (invalid === "adult") {
+        fireEvent.change(screen.getByLabelText("Your display name"), {
+          target: { value: "Morgan" },
+        });
+      } else if (invalid === "family name") {
+        fireEvent.change(screen.getByLabelText("Family name"), {
+          target: { value: "The Park Family" },
+        });
+      } else if (invalid === "points name") {
+        fireEvent.change(screen.getByLabelText("Family points name"), {
+          target: { value: "Stars" },
+        });
+      } else if (invalid === "timezone") {
+        fireEvent.change(screen.getByLabelText("Family timezone"), {
+          target: { value: "America/New_York" },
+        });
+      } else if (invalid === "empty children") {
+        fireEvent.change(screen.getByLabelText("Child name"), {
+          target: { value: "Maya" },
+        });
+        fireEvent.click(screen.getByLabelText("Explorer ages 4 to 7"));
+        fireEvent.click(screen.getByRole("button", { name: "Add child" }));
+      } else if (invalid === "invalid child") {
+        fireEvent.click(screen.getByRole("button", { name: "Remove Maya" }));
+        fireEvent.change(screen.getByLabelText("Child name"), {
+          target: { value: "Maya" },
+        });
+        fireEvent.click(screen.getByLabelText("Explorer ages 4 to 7"));
+        fireEvent.click(screen.getByRole("button", { name: "Add child" }));
+      } else {
+        fireEvent.change(screen.getByLabelText("Quiet hours start"), {
+          target: { value: "20:00" },
+        });
+      }
+
+      await clickContinue();
+
+      const completedIndex = [
+        "adult",
+        "family",
+        "children",
+        "starter_goals",
+        "starter_rewards",
+        "notifications",
+        "review",
+      ].indexOf(step);
+      expect(saveOnboardingDraft).toHaveBeenCalledWith(
+        expect.objectContaining({
+          onboarding: {
+            completedSteps: [
+              "adult",
+              "family",
+              "children",
+              "starter_goals",
+              "starter_rewards",
+              "notifications",
+              "review",
+            ].slice(0, completedIndex + 1),
+            currentStep: [
+              "family",
+              "children",
+              "starter_goals",
+              "starter_rewards",
+              "notifications",
+              "review",
+              "complete",
+            ][completedIndex],
+            status: "in_progress",
+          },
+        }),
+      );
+      const savedDraft = saveOnboardingDraft.mock.calls[0]?.[0].draft as OnboardingDraft;
+      for (const child of savedDraft.childDrafts) {
+        expect(child).not.toHaveProperty("pin");
+      }
+    },
+  );
+
+  it("keeps invalid partially entered current-step data editable on resume", () => {
+    render(
+      <OnboardingWizard
+        busy={false}
+        completeFamilySetup={vi.fn()}
+        error={null}
+        initialDraft={{
+          ...createDefaultDraftForReview(),
+          familyName: "",
+          pointsName: "",
+          timezone: "",
+        }}
+        initialOnboarding={{
+          completedSteps: ["adult"],
+          currentStep: "family",
+          status: "in_progress",
+        }}
+        saveOnboardingDraft={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-label", "Onboarding step 2 of 7");
+    expect(screen.getByLabelText("Family name")).toHaveValue("");
+    expect(screen.getByLabelText("Family points name")).toHaveValue("");
+    expect(screen.getByLabelText("Family timezone")).toHaveValue("");
+    expect(screen.queryByText(/We repaired your saved setup/)).not.toBeInTheDocument();
+  });
 });
 
 const createDefaultDraftForReview = () => ({
   adultDisplayName: "Morgan",
-  childDrafts: [],
+  childDrafts: [
+    {
+      clientId: "draft-maya",
+      displayName: "Maya",
+      experienceMode: "explorer" as const,
+      pinRequested: true,
+    },
+  ],
   familyName: "The Park Family",
   notificationPreferences: {
     approvalUpdates: true,
