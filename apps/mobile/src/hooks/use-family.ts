@@ -8,6 +8,14 @@ export function useFamilySnapshot(): FamilySnapshot | null {
   return useFamilyStore((state) => state.snapshot);
 }
 
+export function useFamilySession(): FamilySnapshot["session"] | null {
+  return useFamilyStore((state) => state.snapshot?.session ?? null);
+}
+
+export function useOnboardingState(): FamilySnapshot["onboarding"] | null {
+  return useFamilyStore((state) => state.snapshot?.onboarding ?? null);
+}
+
 export function useFamilyAction() {
   const { repository } = useAppServices();
   const applySnapshot = useFamilyStore((state) => state.applySnapshot);

@@ -1,4 +1,8 @@
+import { useRouter } from "expo-router";
+
 import { AppTabs } from "../../../src/components/AppTabs";
+import { RouteGuard } from "../../../src/components/RouteGuard";
+import { useFamilySession } from "../../../src/hooks/use-family";
 
 const tabs = [
   { icon: "home-outline", name: "home", title: "Home" },
@@ -9,5 +13,16 @@ const tabs = [
 ] as const;
 
 export default function ChildTabsLayout() {
-  return <AppTabs tabs={tabs} />;
+  const router = useRouter();
+  const session = useFamilySession();
+
+  return (
+    <RouteGuard
+      allow="child"
+      onRecover={() => router.replace("/(child)/select-profile")}
+      session={session}
+    >
+      <AppTabs tabs={tabs} />
+    </RouteGuard>
+  );
 }

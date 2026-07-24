@@ -9,14 +9,31 @@ import { Card } from "../../../src/components/Card";
 import { FormField } from "../../../src/components/FormField";
 import { LoadingState } from "../../../src/components/LoadingState";
 import { PageHeader } from "../../../src/components/PageHeader";
+import { RouteGuard } from "../../../src/components/RouteGuard";
 import { Screen } from "../../../src/components/Screen";
 import {
   createLocalCommandId,
   useFamilyAction,
+  useFamilySession,
   useFamilySnapshot,
 } from "../../../src/hooks/use-family";
 
 export default function GoalDetailRoute() {
+  const router = useRouter();
+  const session = useFamilySession();
+
+  return (
+    <RouteGuard
+      allow="child"
+      onRecover={() => router.replace("/(child)/select-profile")}
+      session={session}
+    >
+      <GoalDetailContent />
+    </RouteGuard>
+  );
+}
+
+function GoalDetailContent() {
   const { occurrenceId } = useLocalSearchParams<{ occurrenceId: string }>();
   const router = useRouter();
   const snapshot = useFamilySnapshot();

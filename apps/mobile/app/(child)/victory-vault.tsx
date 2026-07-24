@@ -6,10 +6,26 @@ import { colors, getAgeModeTokens, radii, spacing } from "@fovari/design-system"
 import { Card } from "../../src/components/Card";
 import { LoadingState } from "../../src/components/LoadingState";
 import { PageHeader } from "../../src/components/PageHeader";
+import { RouteGuard } from "../../src/components/RouteGuard";
 import { Screen } from "../../src/components/Screen";
-import { useFamilySnapshot } from "../../src/hooks/use-family";
+import { useFamilySession, useFamilySnapshot } from "../../src/hooks/use-family";
 
 export default function VictoryVaultRoute() {
+  const router = useRouter();
+  const session = useFamilySession();
+
+  return (
+    <RouteGuard
+      allow="child"
+      onRecover={() => router.replace("/(child)/select-profile")}
+      session={session}
+    >
+      <VictoryVaultContent />
+    </RouteGuard>
+  );
+}
+
+function VictoryVaultContent() {
   const router = useRouter();
   const snapshot = useFamilySnapshot();
   if (!snapshot) return <LoadingState />;
