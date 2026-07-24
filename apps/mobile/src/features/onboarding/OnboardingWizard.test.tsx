@@ -776,6 +776,154 @@ describe("OnboardingWizard", () => {
     expect(screen.getByLabelText("Family timezone")).toHaveValue("");
     expect(screen.queryByText(/We repaired your saved setup/)).not.toBeInTheDocument();
   });
+
+  it("rewinds duplicate child client IDs to children while retaining both sanitized drafts", () => {
+    const base = createDefaultDraftForReview();
+    render(
+      <OnboardingWizard
+        busy={false}
+        completeFamilySetup={vi.fn()}
+        error={null}
+        initialDraft={{
+          ...base,
+          childDrafts: [
+            base.childDrafts[0]!,
+            {
+              ...base.childDrafts[0]!,
+              displayName: "Maya copy",
+              pin: "2468",
+            } as unknown as OnboardingDraft["childDrafts"][number],
+          ],
+        }}
+        initialOnboarding={{
+          completedSteps: [
+            "adult",
+            "family",
+            "children",
+            "starter_goals",
+            "starter_rewards",
+            "notifications",
+          ],
+          currentStep: "review",
+          status: "in_progress",
+        }}
+        saveOnboardingDraft={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-label", "Onboarding step 3 of 7");
+    expect(screen.getByText(/We repaired your saved setup/)).toBeInTheDocument();
+    expect(screen.getByText("Maya")).toBeInTheDocument();
+    expect(screen.getByText("Maya copy")).toBeInTheDocument();
+    expect(screen.queryByText("2468")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    {
+      field: "goal",
+      label: "Select starter goal Read together",
+      selectedKey: "selectedStarterGoalIds" as const,
+      stepNumber: 4,
+    },
+    {
+      field: "reward",
+      label: "Select starter reward Family movie night",
+      selectedKey: "selectedStarterRewardIds" as const,
+      stepNumber: 5,
+    },
+  ])(
+    "rewinds duplicate starter $field IDs and saves one sanitized selection",
+    async ({ label, selectedKey, stepNumber }) => {
+      const base = createDefaultDraftForReview();
+      const selectedId = base[selectedKey][0]!;
+      const saveOnboardingDraft = vi.fn().mockResolvedValue(createDemoSeed());
+      render(
+        <OnboardingWizard
+          busy={false}
+          completeFamilySetup={vi.fn()}
+          error={null}
+          initialDraft={{
+            ...base,
+            [selectedKey]: [selectedId, selectedId],
+          }}
+          initialOnboarding={{
+            completedSteps: [
+              "adult",
+              "family",
+              "children",
+              "starter_goals",
+              "starter_rewards",
+              "notifications",
+            ],
+            currentStep: "review",
+            status: "in_progress",
+          }}
+          saveOnboardingDraft={saveOnboardingDraft}
+        />,
+      );
+
+      expect(screen.getByRole("progressbar")).toHaveAttribute(
+        "aria-label",
+        `Onboarding step ${stepNumber} of 7`,
+      );
+      expect(screen.getByText(/We repaired your saved setup/)).toBeInTheDocument();
+      expect(screen.getByLabelText(label)).toHaveAttribute("aria-checked", "true");
+
+      await clickContinue();
+
+      expect(saveOnboardingDraft.mock.calls[0]?.[0].draft[selectedKey]).toEqual([selectedId]);
+    },
+  );
+
+  it("whitelists every persisted draft field and strips legacy PIN containers before saving", async () => {
+    const base = createDefaultDraftForReview();
+    const saveOnboardingDraft = vi.fn().mockResolvedValue(createDemoSeed());
+    const malformedDraft = {
+      ...base,
+      childDrafts: [{ ...base.childDrafts[0]!, pin: "3333" }],
+      childPins: { "draft-maya": "2222" },
+      notificationPreferences: {
+        ...base.notificationPreferences,
+        pin: "4444",
+      },
+      pin: "1111",
+    } as unknown as OnboardingDraft;
+
+    render(
+      <OnboardingWizard
+        busy={false}
+        completeFamilySetup={vi.fn()}
+        error={null}
+        initialDraft={malformedDraft}
+        initialOnboarding={{
+          completedSteps: ["adult"],
+          currentStep: "family",
+          status: "in_progress",
+        }}
+        saveOnboardingDraft={saveOnboardingDraft}
+      />,
+    );
+
+    expect(screen.getByLabelText("Family name")).toHaveValue("The Park Family");
+    await clickContinue();
+
+    const savedDraft = saveOnboardingDraft.mock.calls[0]?.[0].draft as OnboardingDraft;
+    expect(savedDraft).toEqual({
+      adultDisplayName: base.adultDisplayName,
+      childDrafts: base.childDrafts,
+      familyName: base.familyName,
+      notificationPreferences: base.notificationPreferences,
+      pointsName: base.pointsName,
+      selectedStarterGoalIds: base.selectedStarterGoalIds,
+      selectedStarterRewardIds: base.selectedStarterRewardIds,
+      timezone: base.timezone,
+    });
+    expect(JSON.stringify(savedDraft)).not.toMatch(/1111|2222|3333|4444/);
+    expect(savedDraft).not.toHaveProperty("pin");
+    expect(savedDraft).not.toHaveProperty("childPins");
+    expect(savedDraft.childDrafts[0]).not.toHaveProperty("pin");
+    expect(savedDraft.notificationPreferences).not.toHaveProperty("pin");
+  });
 });
 
 const createDefaultDraftForReview = () => ({

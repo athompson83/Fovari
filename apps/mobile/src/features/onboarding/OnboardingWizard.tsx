@@ -88,13 +88,26 @@ const normalizeOnboardingResume = (
   const source = structuredClone(initialOnboarding ?? createOnboardingState());
   const sourceDraft = structuredClone(initialDraft ?? createDefaultOnboardingDraft());
   const draft: OnboardingDraft = {
-    ...sourceDraft,
+    adultDisplayName: sourceDraft.adultDisplayName,
     childDrafts: sourceDraft.childDrafts.map((child) => ({
       clientId: child.clientId,
       displayName: child.displayName,
       experienceMode: child.experienceMode,
       pinRequested: child.pinRequested,
     })),
+    familyName: sourceDraft.familyName,
+    notificationPreferences: {
+      approvalUpdates: sourceDraft.notificationPreferences.approvalUpdates,
+      childEncouragement: sourceDraft.notificationPreferences.childEncouragement,
+      enabled: sourceDraft.notificationPreferences.enabled,
+      quietHoursEnd: sourceDraft.notificationPreferences.quietHoursEnd,
+      quietHoursStart: sourceDraft.notificationPreferences.quietHoursStart,
+      weeklySummary: sourceDraft.notificationPreferences.weeklySummary,
+    },
+    pointsName: sourceDraft.pointsName,
+    selectedStarterGoalIds: [...sourceDraft.selectedStarterGoalIds],
+    selectedStarterRewardIds: [...sourceDraft.selectedStarterRewardIds],
+    timezone: sourceDraft.timezone,
   };
   const claimedIndex =
     source.currentStep === "complete"
@@ -129,19 +142,30 @@ const normalizeOnboardingResume = (
 
   const knownGoalIds = new Set(STARTER_GOALS.map((goal) => goal.id));
   const knownRewardIds = new Set(STARTER_REWARDS.map((reward) => reward.id));
-  const selectedStarterGoalIds = draft.selectedStarterGoalIds.filter((id) =>
-    knownGoalIds.has(id as (typeof STARTER_GOALS)[number]["id"]),
-  );
-  const selectedStarterRewardIds = draft.selectedStarterRewardIds.filter((id) =>
-    knownRewardIds.has(id as (typeof STARTER_REWARDS)[number]["id"]),
-  );
+  const selectedStarterGoalIds = [
+    ...new Set(
+      draft.selectedStarterGoalIds.filter((id) =>
+        knownGoalIds.has(id as (typeof STARTER_GOALS)[number]["id"]),
+      ),
+    ),
+  ];
+  const selectedStarterRewardIds = [
+    ...new Set(
+      draft.selectedStarterRewardIds.filter((id) =>
+        knownRewardIds.has(id as (typeof STARTER_REWARDS)[number]["id"]),
+      ),
+    ),
+  ];
   const staleGoal = selectedStarterGoalIds.length !== draft.selectedStarterGoalIds.length;
   const staleReward = selectedStarterRewardIds.length !== draft.selectedStarterRewardIds.length;
+  const uniqueChildClientIds =
+    new Set(draft.childDrafts.map((child) => child.clientId)).size === draft.childDrafts.length;
   const completedPrerequisitesValid: Readonly<Record<WizardStep, boolean>> = {
     adult: draft.adultDisplayName.trim().length > 0 && draft.adultDisplayName.trim().length <= 40,
     children:
       draft.childDrafts.length > 0 &&
-      draft.childDrafts.every((child) => OnboardingChildDraftSchema.safeParse(child).success),
+      draft.childDrafts.every((child) => OnboardingChildDraftSchema.safeParse(child).success) &&
+      uniqueChildClientIds,
     family: CreateFamilySchema.safeParse({
       name: draft.familyName,
       pointsName: draft.pointsName,
@@ -550,8 +574,8 @@ export function OnboardingWizard({
                 Add more than one child if you like. Each experience adapts its language and touch
                 targets by age.
               </Text>
-              {draft.childDrafts.map((child) => (
-                <View key={child.clientId} style={styles.childCard}>
+              {draft.childDrafts.map((child, index) => (
+                <View key={`${child.clientId}-${index}`} style={styles.childCard}>
                   <View style={styles.childSummary}>
                     <Text style={styles.childName}>{child.displayName}</Text>
                     <Text style={styles.childMode}>
