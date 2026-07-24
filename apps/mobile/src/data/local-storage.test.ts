@@ -207,6 +207,39 @@ describe("versioned local family storage", () => {
     expect(await storage.getItem("fovari.local-family")).toBeNull();
   });
 
+  it("accepts the childless transitional snapshot used by persisted family setup", async () => {
+    const storage = createMemoryStorage();
+    const initial = await readLocalEnvelope(storage, createDemoSeed());
+    const setupEnvelope = {
+      ...initial,
+      pinAttempts: {},
+      processedCommandIds: ["begin-setup"],
+      snapshot: {
+        ...initial.snapshot,
+        achievements: [],
+        activeChildId: "",
+        calendar: [],
+        children: [],
+        completions: [],
+        familyName: "",
+        goals: [],
+        ledger: [],
+        onboarding: {
+          completedSteps: [],
+          currentStep: "adult" as const,
+          status: "not_started" as const,
+        },
+        redemptions: [],
+        rewards: [],
+        selectedRewardByChild: {},
+      },
+    };
+
+    await writeLocalEnvelope(storage, setupEnvelope);
+
+    expect((await readLocalEnvelope(storage, createDemoSeed())).snapshot.children).toEqual([]);
+  });
+
   it("does not write a syntactically valid envelope beyond the local size limit", async () => {
     const storage = createMemoryStorage();
     const initial = await readLocalEnvelope(storage, createDemoSeed());

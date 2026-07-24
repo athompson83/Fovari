@@ -2,11 +2,28 @@ import { describe, expect, it } from "vitest";
 
 import { createDemoSeed } from "../data/fixtures";
 import { createLocalFamilyRepository } from "../data/local-family-repository";
+import { createMemoryStorage } from "../data/local-storage";
 import { createFamilyStore } from "./family-store";
+
+const createTestRepository = () =>
+  createLocalFamilyRepository({
+    pinVault: {
+      async isConfigured() {
+        return false;
+      },
+      async remove() {},
+      async set() {},
+      async verify() {
+        return false;
+      },
+    },
+    seed: createDemoSeed(),
+    storage: createMemoryStorage(),
+  });
 
 describe("family store", () => {
   it("loads the repository snapshot into a ready state", async () => {
-    const store = createFamilyStore(createLocalFamilyRepository(createDemoSeed()));
+    const store = createFamilyStore(createTestRepository());
 
     expect(store.getState().status).toBe("idle");
     await store.getState().initialize();
@@ -16,7 +33,7 @@ describe("family store", () => {
   });
 
   it("accepts a confirmed repository snapshot without copying server objects into drafts", () => {
-    const repository = createLocalFamilyRepository(createDemoSeed());
+    const repository = createTestRepository();
     const store = createFamilyStore(repository);
     const confirmed = createDemoSeed();
 

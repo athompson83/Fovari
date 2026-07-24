@@ -102,7 +102,7 @@ export interface LocalAdultSummary {
   id: string;
 }
 
-export interface NotificationPreferences extends NotificationPreferencesInput {}
+export type NotificationPreferences = NotificationPreferencesInput;
 
 export interface OnboardingDraft {
   adultDisplayName: string;
@@ -177,18 +177,35 @@ export interface FamilyRepository {
     input: ApproveCompletionInput,
     context: CommandContext,
   ): Promise<FamilySnapshot>;
+  beginFamilySetup(input: BeginFamilySetupInput, context: CommandContext): Promise<FamilySnapshot>;
+  completeFamilySetup(
+    input: CompleteFamilySetupInput,
+    context: CommandContext,
+  ): Promise<FamilySnapshot>;
+  configureChildPin(
+    input: ConfigureChildPinInput,
+    context: CommandContext,
+  ): Promise<FamilySnapshot>;
   createChild(input: CreateChildInput, context: CommandContext): Promise<FamilySnapshot>;
   createFamily(input: CreateFamilyInput, context: CommandContext): Promise<FamilySnapshot>;
   createGoal(input: CreateGoalInput, context: CommandContext): Promise<FamilySnapshot>;
   createReward(input: CreateRewardInput, context: CommandContext): Promise<FamilySnapshot>;
   decideRedemption(input: DecideRedemptionInput, context: CommandContext): Promise<FamilySnapshot>;
   getSnapshot(): Promise<FamilySnapshot>;
+  resetDemo(context: CommandContext): Promise<FamilySnapshot>;
   requestRedemption(
     input: RequestRedemptionCommandInput,
     context: CommandContext,
   ): Promise<FamilySnapshot>;
+  saveOnboardingDraft(
+    input: SaveOnboardingDraftInput,
+    context: CommandContext,
+  ): Promise<FamilySnapshot>;
   selectChild(childId: string): Promise<FamilySnapshot>;
   selectReward(childId: string, rewardId: string): Promise<FamilySnapshot>;
+  signInAdult(): Promise<FamilySnapshot>;
+  signOut(): Promise<FamilySnapshot>;
   submitCompletion(input: SubmitCompletionInput, context: CommandContext): Promise<FamilySnapshot>;
   switchActor(actor: FamilyActor): Promise<FamilySnapshot>;
+  unlockChild(input: UnlockChildInput): Promise<FamilySnapshot>;
 }

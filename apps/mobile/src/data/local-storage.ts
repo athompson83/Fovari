@@ -86,6 +86,9 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const isString = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= MAX_STRING_LENGTH;
 
+const isPossiblyEmptyString = (value: unknown): value is string =>
+  typeof value === "string" && value.length <= MAX_STRING_LENGTH;
+
 const isOptionalString = (value: unknown) => value === undefined || isString(value);
 
 const isBoolean = (value: unknown): value is boolean => typeof value === "boolean";
@@ -154,13 +157,9 @@ function isPinAttempts(value: unknown): value is LocalFamilyEnvelopeV1["pinAttem
 function isSnapshot(value: unknown): value is FamilySnapshot {
   if (!isRecord(value)) return false;
   if (
-    !hasStringFields(value, [
-      "familyId",
-      "familyName",
-      "pointsName",
-      "timezone",
-      "activeChildId",
-    ]) ||
+    !hasStringFields(value, ["familyId", "pointsName", "timezone"]) ||
+    !isPossiblyEmptyString(value.familyName) ||
+    !isPossiblyEmptyString(value.activeChildId) ||
     !isBoundedArray(value.children) ||
     !isBoundedArray(value.achievements) ||
     !isBoundedArray(value.calendar) ||
@@ -202,7 +201,9 @@ function isSnapshot(value: unknown): value is FamilySnapshot {
       childIds.add(child.id as string);
       return true;
     }) ||
-    !childIds.has(value.activeChildId as string)
+    (childIds.size === 0
+      ? value.activeChildId !== ""
+      : !childIds.has(value.activeChildId as string))
   ) {
     return false;
   }
@@ -322,6 +323,8 @@ function isSnapshot(value: unknown): value is FamilySnapshot {
     !onboarding.completedSteps.every((step) => onboardingSteps.has(step as string)) ||
     !onboardingCurrentSteps.has(onboarding.currentStep as string) ||
     !onboardingStatuses.has(onboarding.status as string) ||
+    (onboarding.status === "complete" &&
+      ((value.familyName as string).length === 0 || childIds.size === 0)) ||
     (value.onboardingDraft !== null && !isOnboardingDraft(value.onboardingDraft))
   ) {
     return false;
