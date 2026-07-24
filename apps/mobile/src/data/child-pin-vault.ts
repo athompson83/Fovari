@@ -94,22 +94,24 @@ export function selectChildPinStorage({
   throw new Error("Web child PIN storage is limited to synthetic demo data.");
 }
 
-const expoExtra = Constants.expoConfig?.extra;
-
 // Web storage is only enabled for local/preview synthetic demo data. Production
 // child credentials require a reviewed server/native credential design.
-export const childPinStorage = selectChildPinStorage({
-  appEnvironment: expoExtra?.appEnvironment,
-  dataMode: expoExtra?.dataMode,
-  platformOS: Platform.OS,
-});
+export function createConfiguredChildPinStorage(): KeyValueStorage {
+  const expoExtra = Constants.expoConfig?.extra;
+  return selectChildPinStorage({
+    appEnvironment: expoExtra?.appEnvironment,
+    dataMode: expoExtra?.dataMode,
+    platformOS: Platform.OS,
+  });
+}
 
 export function createChildPinVault(options: ChildPinVaultOptions = {}): ChildPinVault {
   const digest = options.digest ?? expoDigest;
   const randomId = options.randomId ?? expoRandomId;
-  const storage = options.storage ?? childPinStorage;
+  const resolveStorage = () => options.storage ?? createConfiguredChildPinStorage();
 
   const readStoredPin = async (childId: string): Promise<StoredPin | null> => {
+    const storage = resolveStorage();
     const serialized = await storage.getItem(keyFor(childId));
     if (!serialized) return null;
 
@@ -125,7 +127,7 @@ export function createChildPinVault(options: ChildPinVaultOptions = {}): ChildPi
       return (await readStoredPin(childId)) !== null;
     },
     async remove(childId) {
-      await storage.removeItem(keyFor(childId));
+      await resolveStorage().removeItem(keyFor(childId));
     },
     async set(childId, pin) {
       const salt = randomId();
@@ -137,7 +139,7 @@ export function createChildPinVault(options: ChildPinVaultOptions = {}): ChildPi
       if (!isStoredValue(stored.digest) || !isStoredValue(stored.salt)) {
         throw new Error("Unable to store the synthetic child PIN.");
       }
-      await storage.setItem(keyFor(childId), JSON.stringify(stored));
+      await resolveStorage().setItem(keyFor(childId), JSON.stringify(stored));
     },
     async verify(childId, pin) {
       const stored = await readStoredPin(childId);
@@ -147,4 +149,6 @@ export function createChildPinVault(options: ChildPinVaultOptions = {}): ChildPi
   };
 }
 
-export const childPinVault = createChildPinVault();
+export function createConfiguredChildPinVault(): ChildPinVault {
+  return createChildPinVault({ storage: createConfiguredChildPinStorage() });
+}

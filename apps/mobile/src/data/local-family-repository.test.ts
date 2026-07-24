@@ -11,6 +11,8 @@ describe("LocalFamilyRepository", () => {
     const initial = await repository.getSnapshot();
     const initialPoints = initial.children.find((child) => child.id === DEMO_IDS.alex)!.points;
 
+    await repository.switchActor({ childId: DEMO_IDS.alex, id: DEMO_IDS.alex, role: "child" });
+
     const submitted = await repository.submitCompletion(
       {
         childId: DEMO_IDS.alex,
@@ -33,6 +35,8 @@ describe("LocalFamilyRepository", () => {
     expect(submitted.children.find((child) => child.id === DEMO_IDS.alex)!.points).toBe(
       initialPoints,
     );
+
+    await repository.switchActor({ id: DEMO_IDS.parent, role: "family_owner" });
 
     const approved = await repository.approveCompletion(
       { completionId: completion.id, parentNote: "Great consistency!" },
@@ -67,6 +71,8 @@ describe("LocalFamilyRepository", () => {
     const initial = await repository.getSnapshot();
     const initialPoints = initial.children.find((child) => child.id === DEMO_IDS.alex)!.points;
 
+    await repository.switchActor({ childId: DEMO_IDS.alex, id: DEMO_IDS.alex, role: "child" });
+
     const requested = await repository.requestRedemption(
       {
         childId: DEMO_IDS.alex,
@@ -85,6 +91,8 @@ describe("LocalFamilyRepository", () => {
     expect(requested.children.find((child) => child.id === DEMO_IDS.alex)!.points).toBe(
       initialPoints - 100,
     );
+
+    await repository.switchActor({ id: DEMO_IDS.parent, role: "family_owner" });
 
     await repository.decideRedemption(
       { decision: "approve", redemptionId: redemption.id },
@@ -125,6 +133,8 @@ describe("LocalFamilyRepository", () => {
   it("rejects a reward request that would overdraw the point account", async () => {
     const repository = createLocalFamilyRepository(createDemoSeed());
 
+    await repository.switchActor({ childId: DEMO_IDS.june, id: DEMO_IDS.june, role: "child" });
+
     await expect(
       repository.requestRedemption(
         {
@@ -140,5 +150,43 @@ describe("LocalFamilyRepository", () => {
         }),
       ),
     ).rejects.toThrow("enough points");
+  });
+
+  it("does not authorize an owner when the synthetic session is signed out", async () => {
+    const seed = createDemoSeed();
+    const repository = createLocalFamilyRepository({
+      ...seed,
+      session: { kind: "signed_out" },
+    });
+
+    await expect(
+      repository.approveCompletion(
+        { completionId: "completion-seed-june" },
+        createCommandContext({
+          actorId: DEMO_IDS.parent,
+          familyId: DEMO_IDS.family,
+          idempotencyKey: "signed-out-owner-approval",
+        }),
+      ),
+    ).rejects.toThrow("active synthetic session");
+  });
+
+  it("does not authorize an actor whose session identity is inconsistent", async () => {
+    const seed = createDemoSeed();
+    const repository = createLocalFamilyRepository({
+      ...seed,
+      session: { actorId: "other-adult", kind: "adult" },
+    });
+
+    await expect(
+      repository.approveCompletion(
+        { completionId: "completion-seed-june" },
+        createCommandContext({
+          actorId: DEMO_IDS.parent,
+          familyId: DEMO_IDS.family,
+          idempotencyKey: "mismatched-owner-approval",
+        }),
+      ),
+    ).rejects.toThrow("active synthetic session");
   });
 });

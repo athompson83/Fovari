@@ -1,6 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import type { FamilySnapshot } from "@fovari/api-client";
+import { reducePointLedger } from "@fovari/domain";
+import { NotificationPreferencesSchema, OnboardingChildDraftSchema } from "@fovari/validation";
 
 import type { OfflineAction } from "./offline-queue";
 
@@ -114,11 +116,7 @@ const isBooleanRecord = (value: unknown) =>
   Object.entries(value).every(([key, entry]) => isString(key) && isBoolean(entry));
 
 const isNotificationPreferences = (value: unknown) =>
-  isRecord(value) &&
-  hasStringFields(value, ["quietHoursStart", "quietHoursEnd"]) &&
-  [value.approvalUpdates, value.childEncouragement, value.enabled, value.weeklySummary].every(
-    isBoolean,
-  );
+  NotificationPreferencesSchema.safeParse(value).success;
 
 const isLocalEnvelopeError = () =>
   new Error("Invalid local family data. Reset the synthetic family to continue.");
@@ -377,28 +375,52 @@ function isOnboardingDraft(value: unknown): boolean {
     isBoundedArray(value.selectedStarterRewardIds) &&
     value.selectedStarterGoalIds.every(isString) &&
     value.selectedStarterRewardIds.every(isString) &&
-    value.childDrafts.every(
-      (child) =>
-        isRecord(child) &&
-        hasStringFields(child, ["avatarKey", "experienceMode", "name"]) &&
-        experienceModes.has(child.experienceMode as string),
-    )
+    value.childDrafts.every((child) => OnboardingChildDraftSchema.safeParse(child).success)
   );
 }
 
 function isEnvelope(value: unknown): value is LocalFamilyEnvelopeV1 {
-  return (
-    isRecord(value) &&
-    value.version === 1 &&
-    isInteger(value.nextSequence, 1) &&
-    isBoundedArray(value.offlineActions) &&
-    value.offlineActions.every(isOfflineAction) &&
-    isPinAttempts(value.pinAttempts) &&
-    isBoundedArray(value.processedCommandIds) &&
-    value.processedCommandIds.every(isString) &&
-    new Set(value.processedCommandIds).size === value.processedCommandIds.length &&
-    isSnapshot(value.snapshot)
-  );
+  if (
+    !isRecord(value) ||
+    value.version !== 1 ||
+    !isInteger(value.nextSequence, 1) ||
+    !isBoundedArray(value.offlineActions) ||
+    !value.offlineActions.every(isOfflineAction) ||
+    !isPinAttempts(value.pinAttempts) ||
+    !isBoundedArray(value.processedCommandIds) ||
+    !value.processedCommandIds.every(isString) ||
+    new Set(value.processedCommandIds).size !== value.processedCommandIds.length ||
+    !isSnapshot(value.snapshot)
+  ) {
+    return false;
+  }
+
+  const snapshot = value.snapshot;
+  const childIds = new Set(snapshot.children.map((child) => child.id));
+  const knownActorIds = new Set([snapshot.adult.id, ...childIds]);
+  const offlineActions = value.offlineActions as readonly OfflineAction[];
+  const processedCommandIds = value.processedCommandIds as readonly string[];
+  const pinAttempts = value.pinAttempts as LocalFamilyEnvelopeV1["pinAttempts"];
+
+  if (
+    !Object.keys(pinAttempts).every((childId) => childIds.has(childId)) ||
+    !offlineActions.every((action) => knownActorIds.has(action.actorId)) ||
+    new Set(offlineActions.map((action) => action.idempotencyKey)).size !== offlineActions.length ||
+    !snapshot.ledger.every((entry) => processedCommandIds.includes(entry.idempotencyKey))
+  ) {
+    return false;
+  }
+
+  try {
+    return snapshot.children.every((child) => {
+      const projection = reducePointLedger(
+        snapshot.ledger.filter((entry) => entry.childId === child.id),
+      );
+      return projection.balance === child.points;
+    });
+  } catch {
+    return false;
+  }
 }
 
 function assertEnvelope(value: unknown): asserts value is LocalFamilyEnvelopeV1 {

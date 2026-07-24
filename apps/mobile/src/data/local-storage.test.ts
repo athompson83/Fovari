@@ -21,6 +21,40 @@ describe("versioned local family storage", () => {
     expect((await readLocalEnvelope(storage, seed)).snapshot.familyName).toBe("The Park Family");
   });
 
+  it("persists a complete onboarding draft using the shared child-draft contract", async () => {
+    const storage = createMemoryStorage();
+    const initial = await readLocalEnvelope(storage, createDemoSeed());
+    const withDraft = {
+      ...initial,
+      snapshot: {
+        ...initial.snapshot,
+        onboardingDraft: {
+          adultDisplayName: "Jamie",
+          childDrafts: [
+            {
+              clientId: "draft-alex",
+              displayName: "Alex",
+              experienceMode: "adventurer" as const,
+              pinRequested: true,
+            },
+          ],
+          familyName: "The Rivera Family",
+          notificationPreferences: initial.snapshot.notificationPreferences,
+          pointsName: "Stars",
+          selectedStarterGoalIds: [],
+          selectedStarterRewardIds: [],
+          timezone: "America/New_York",
+        },
+      },
+    };
+
+    await writeLocalEnvelope(storage, withDraft);
+
+    expect((await readLocalEnvelope(storage, createDemoSeed())).snapshot.onboardingDraft).toEqual(
+      withDraft.snapshot.onboardingDraft,
+    );
+  });
+
   it("rejects unsupported data without silently changing permissions", async () => {
     const storage = createMemoryStorage({
       "fovari.local-family": JSON.stringify({ version: 99 }),
@@ -97,6 +131,56 @@ describe("versioned local family storage", () => {
         seed,
       ),
     ).rejects.toThrow("Invalid local family data");
+  });
+
+  it("rejects restart state that cannot be reconciled with the synthetic family", async () => {
+    const seed = createDemoSeed();
+    const valid = await readLocalEnvelope(createMemoryStorage(), seed);
+    const ledgerEntry = seed.ledger[0]!;
+    const invalidRecords = [
+      {
+        ...valid,
+        pinAttempts: { "unknown-child": { failures: 1 } },
+      },
+      { ...valid, processedCommandIds: [] },
+      {
+        ...valid,
+        snapshot: { ...seed, ledger: [...seed.ledger, ledgerEntry] },
+      },
+      {
+        ...valid,
+        snapshot: {
+          ...seed,
+          children: seed.children.map((child) =>
+            child.id === ledgerEntry.childId ? { ...child, points: child.points + 1 } : child,
+          ),
+        },
+      },
+      {
+        ...valid,
+        offlineActions: [
+          {
+            actorId: "unknown-actor",
+            attemptCount: 0,
+            commandType: "select_reward",
+            createdAt: "2026-07-24T13:15:00.000Z",
+            entityId: "reward-1",
+            idempotencyKey: "command-1",
+            payload: {},
+            status: "pending",
+          },
+        ],
+      },
+    ];
+
+    for (const invalid of invalidRecords) {
+      await expect(
+        readLocalEnvelope(
+          createMemoryStorage({ "fovari.local-family": JSON.stringify(invalid) }),
+          seed,
+        ),
+      ).rejects.toThrow("Invalid local family data");
+    }
   });
 
   it("validates an envelope before writing it", async () => {

@@ -48,13 +48,25 @@ export function createLocalFamilyRepository(seed: FamilySnapshot): FamilyReposit
   const nextId = () => `90000000-0000-4000-8000-${String(sequence++).padStart(12, "0")}`;
 
   const actorFor = (actorId: string): FamilyActor => {
-    if (snapshot.activeActor.id === actorId) {
-      return snapshot.activeActor;
+    const session = snapshot.session;
+    if (session.kind === "signed_out" || session.actorId !== actorId) {
+      throw new Error("Actor does not match the active synthetic session");
     }
-    if (snapshot.children.some((child) => child.id === actorId)) {
-      return { childId: actorId, id: actorId, role: "child" };
+    if (snapshot.activeActor.id !== actorId) {
+      throw new Error("Active actor does not match the active synthetic session");
     }
-    throw new Error("Actor is not part of this synthetic family");
+    if (
+      session.kind === "child" &&
+      (snapshot.activeActor.role !== "child" ||
+        snapshot.activeActor.childId !== session.childId ||
+        session.childId !== actorId)
+    ) {
+      throw new Error("Active actor does not match the active synthetic session");
+    }
+    if (session.kind === "adult" && snapshot.activeActor.role === "child") {
+      throw new Error("Active actor does not match the active synthetic session");
+    }
+    return snapshot.activeActor;
   };
 
   const requireAdultPermission = (
@@ -412,14 +424,22 @@ export function createLocalFamilyRepository(seed: FamilySnapshot): FamilyReposit
     },
 
     async switchActor(actor: FamilyActor) {
-      if (
-        actor.role !== "child" &&
-        actor.id !== snapshot.activeActor.id &&
-        actor.role !== "family_owner"
-      ) {
+      const isKnownChild =
+        actor.role === "child" &&
+        actor.childId === actor.id &&
+        snapshot.children.some((child) => child.id === actor.childId);
+      const isKnownAdult = actor.role !== "child" && actor.id === snapshot.adult.id;
+      if (!isKnownChild && !isKnownAdult) {
         throw new Error("Synthetic actor is not recognized");
       }
-      snapshot = { ...snapshot, activeActor: copy(actor) };
+      snapshot = {
+        ...snapshot,
+        activeActor: copy(actor),
+        session:
+          actor.role === "child"
+            ? { actorId: actor.id, childId: actor.childId!, kind: "child" }
+            : { actorId: actor.id, kind: "adult" },
+      };
       return result();
     },
   };

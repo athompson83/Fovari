@@ -20,6 +20,7 @@ import * as Crypto from "expo-crypto";
 
 import {
   createChildPinVault,
+  createConfiguredChildPinVault,
   expoDigest,
   expoRandomId,
   selectChildPinStorage,
@@ -32,6 +33,15 @@ const opaqueDigest = async (value: string) =>
     .toString(16)}`;
 
 describe("child PIN vault", () => {
+  it("exposes a configured vault factory without an eager singleton", () => {
+    expect(createConfiguredChildPinVault()).toMatchObject({
+      isConfigured: expect.any(Function),
+      remove: expect.any(Function),
+      set: expect.any(Function),
+      verify: expect.any(Function),
+    });
+  });
+
   it("stores an opaque salted digest and verifies the matching PIN", async () => {
     const storage = createMemoryStorage();
     const digest = vi.fn(opaqueDigest);
