@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 
 import { colors, radii, spacing } from "@fovari/design-system";
 
@@ -13,22 +13,27 @@ interface PageHeaderProps {
 }
 
 export function PageHeader({ actionLabel, eyebrow, onAction, subtitle, title }: PageHeaderProps) {
+  const { width } = useWindowDimensions();
+  const narrow = width <= 480;
+
   return (
-    <View style={styles.root}>
-      <View style={styles.brand}>
-        <FovariLogo compact />
-      </View>
-      <View style={styles.copy}>
-        {eyebrow ? <Text style={styles.eyebrow}>{eyebrow}</Text> : null}
-        <Text style={styles.title}>{title}</Text>
-        {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+    <View style={[styles.root, narrow && styles.rootNarrow]} testID="page-header">
+      <View style={styles.heading} testID="page-header-heading">
+        <View style={styles.brand}>
+          <FovariLogo compact />
+        </View>
+        <View style={styles.copy}>
+          {eyebrow ? <Text style={styles.eyebrow}>{eyebrow}</Text> : null}
+          <Text style={styles.title}>{title}</Text>
+          {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+        </View>
       </View>
       {actionLabel && onAction ? (
         <Pressable
           accessibilityLabel={actionLabel}
           accessibilityRole="button"
           onPress={onAction}
-          style={styles.action}
+          style={[styles.action, narrow && styles.actionNarrow]}
         >
           <Text style={styles.actionText}>{actionLabel}</Text>
         </Pressable>
@@ -51,6 +56,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "800",
   },
+  actionNarrow: {
+    alignSelf: "stretch",
+    marginTop: spacing.md,
+  },
   brand: {
     marginRight: spacing.lg,
   },
@@ -64,10 +73,20 @@ const styles = StyleSheet.create({
     letterSpacing: 1.3,
     textTransform: "uppercase",
   },
+  heading: {
+    alignItems: "center",
+    flex: 1,
+    flexDirection: "row",
+    minWidth: 0,
+  },
   root: {
     alignItems: "center",
     flexDirection: "row",
     marginBottom: spacing.xl,
+  },
+  rootNarrow: {
+    alignItems: "stretch",
+    flexDirection: "column",
   },
   subtitle: {
     color: colors.inkMuted,
