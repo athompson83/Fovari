@@ -3,7 +3,7 @@
 - Date: 2026-07-24
 - Branch: `codex/fovari-functional-mvp`
 - Task 8 starting commit: `5908c2b10db5a0c7becc578b7f52aa3eb1e9b906`
-- Tested application commit: `b7f2780e606ebe47799ffad42fd12077382a9c8b`
+- Tested application commit: `c7db885b35e111b0f5655d348b5d16b7d35160e1`
 - Data: synthetic Rivera demo plus synthetic Morgan/Park/Maya setup
 
 The later evidence-only commit carrying this ledger does not change application behavior. The
@@ -18,7 +18,7 @@ setup/identity browser evidence remains bound to application commit
 | Formatting          | `pnpm format:check`    | Passed                                        |
 | Lint                | `pnpm lint`            | Passed                                        |
 | Strict types        | `pnpm typecheck`       | Passed                                        |
-| Unit/rendered tests | `pnpm test`            | Passed: 235 tests in 33 files                 |
+| Unit/rendered tests | `pnpm test`            | Passed: 241 tests in 33 files                 |
 | Expo web bundle     | `pnpm build`           | Passed: 66 static routes                      |
 | Full local gate     | `pnpm verify`          | Passed                                        |
 | Browser phone       | Playwright at 390x844  | Historical pass at `b3700fa`; not rerun       |
@@ -49,6 +49,12 @@ passing status.
   durable credential journal are removed before a clean reseed.
 - The child goal route test proves an active Maya session cannot render a sibling child's goal title
   or instructions when given the sibling occurrence identifier.
+- Authenticated child surfaces resolve identity only from `session.childId`; rendered Home and goal
+  regressions prove a stale sibling `activeChildId` cannot disclose sibling content.
+- Local persistence rejects any child envelope where `session.childId`, `session.actorId`,
+  `activeActor.childId`, `activeActor.id`, and `activeChildId` do not agree. Selecting any profile
+  from an authenticated child session atomically persists `signed_out` before the selected profile
+  can unlock, while adult and signed-out preview behavior remains unchanged.
 - The project contains no production URL, service-role key, real child data, billing product, or
   deployment configuration.
 - Browser QA created the synthetic Morgan/Park/Maya family, rejected a wrong PIN, accepted the
