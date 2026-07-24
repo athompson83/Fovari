@@ -13,6 +13,7 @@ export function FormField({ error, label, multiline, style, ...props }: FormFiel
       <Text style={styles.label}>{label}</Text>
       <TextInput
         {...props}
+        aria-disabled={props.accessibilityState?.disabled}
         accessibilityLabel={label}
         multiline={multiline}
         placeholderTextColor="#9298AA"

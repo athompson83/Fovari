@@ -8,6 +8,7 @@ import type {
 } from "@fovari/api-client";
 import { colors, radii, spacing } from "@fovari/design-system";
 import {
+  ONBOARDING_STEPS,
   completeOnboardingStep,
   createOnboardingState,
   type ExperienceMode,
@@ -56,24 +57,118 @@ const isWizardStep = (step: OnboardingStep): step is WizardStep => step !== "com
 const validPin = (pin: string) => /^\d{4,6}$/.test(pin);
 const validLocalTime = (time: string) => /^([01]\d|2[0-3]):[0-5]\d$/.test(time);
 
-const initialStateFor = (initialOnboarding?: OnboardingState | null): OnboardingState =>
-  initialOnboarding && isWizardStep(initialOnboarding.currentStep)
-    ? structuredClone(initialOnboarding)
-    : createOnboardingState();
+const canonicalOnboardingAt = (index: number): OnboardingState => {
+  const currentStep = ONBOARDING_STEPS[index] ?? "complete";
+  return {
+    completedSteps: ONBOARDING_STEPS.slice(0, index),
+    currentStep,
+    status: index === 0 ? "not_started" : currentStep === "complete" ? "complete" : "in_progress",
+  };
+};
+
+const sameSteps = (left: readonly WizardStep[], right: readonly WizardStep[]) =>
+  left.length === right.length && left.every((step, index) => step === right[index]);
+
+interface NormalizedResume {
+  draft: OnboardingDraft;
+  notice: string | null;
+  onboarding: OnboardingState;
+  step: WizardStep;
+}
+
+const normalizeOnboardingResume = (
+  initialDraft: OnboardingDraft | null,
+  initialOnboarding?: OnboardingState | null,
+): NormalizedResume => {
+  const source = structuredClone(initialOnboarding ?? createOnboardingState());
+  const draft = structuredClone(initialDraft ?? createDefaultOnboardingDraft());
+  const claimedIndex =
+    source.currentStep === "complete"
+      ? ONBOARDING_STEPS.length
+      : ONBOARDING_STEPS.indexOf(source.currentStep);
+  const expectedStatus =
+    claimedIndex === 0
+      ? "not_started"
+      : claimedIndex === ONBOARDING_STEPS.length
+        ? "complete"
+        : "in_progress";
+  const expectedCompleted = ONBOARDING_STEPS.slice(0, claimedIndex);
+  const ledgerValid =
+    claimedIndex >= 0 &&
+    sameSteps(source.completedSteps, expectedCompleted) &&
+    source.status === expectedStatus;
+
+  let safeIndex = claimedIndex >= 0 ? claimedIndex : 0;
+  if (!ledgerValid) {
+    let prefixLength = 0;
+    while (
+      prefixLength < source.completedSteps.length &&
+      source.completedSteps[prefixLength] === ONBOARDING_STEPS[prefixLength]
+    ) {
+      prefixLength += 1;
+    }
+    safeIndex = Math.min(safeIndex, prefixLength);
+    if (source.currentStep === "complete") {
+      safeIndex = Math.min(safeIndex, ONBOARDING_STEPS.length - 1);
+    }
+  }
+
+  const knownGoalIds = new Set(STARTER_GOALS.map((goal) => goal.id));
+  const knownRewardIds = new Set(STARTER_REWARDS.map((reward) => reward.id));
+  const selectedStarterGoalIds = draft.selectedStarterGoalIds.filter((id) =>
+    knownGoalIds.has(id as (typeof STARTER_GOALS)[number]["id"]),
+  );
+  const selectedStarterRewardIds = draft.selectedStarterRewardIds.filter((id) =>
+    knownRewardIds.has(id as (typeof STARTER_REWARDS)[number]["id"]),
+  );
+  const staleGoal = selectedStarterGoalIds.length !== draft.selectedStarterGoalIds.length;
+  const staleReward = selectedStarterRewardIds.length !== draft.selectedStarterRewardIds.length;
+  const goalStepIndex = ONBOARDING_STEPS.indexOf("starter_goals");
+  const rewardStepIndex = ONBOARDING_STEPS.indexOf("starter_rewards");
+  const goalNeedsCorrection =
+    (staleGoal && safeIndex >= goalStepIndex) ||
+    (selectedStarterGoalIds.length === 0 && safeIndex > goalStepIndex);
+  const rewardNeedsCorrection =
+    (staleReward && safeIndex >= rewardStepIndex) ||
+    (selectedStarterRewardIds.length === 0 && safeIndex > rewardStepIndex);
+
+  if (goalNeedsCorrection) safeIndex = Math.min(safeIndex, goalStepIndex);
+  else if (rewardNeedsCorrection) safeIndex = Math.min(safeIndex, rewardStepIndex);
+
+  const onboarding = canonicalOnboardingAt(safeIndex);
+  const step = isWizardStep(onboarding.currentStep) ? onboarding.currentStep : "review";
+  return {
+    draft: {
+      ...draft,
+      selectedStarterGoalIds,
+      selectedStarterRewardIds,
+    },
+    notice:
+      !ledgerValid || staleGoal || staleReward || goalNeedsCorrection || rewardNeedsCorrection
+        ? "We repaired your saved setup and returned you to the earliest step that needs review. Your entered family details were kept."
+        : null,
+    onboarding,
+    step,
+  };
+};
 
 const CheckOption = ({
   checked,
+  disabled,
   label,
   onPress,
 }: {
   checked: boolean;
+  disabled: boolean;
   label: string;
   onPress(): void;
 }) => (
   <Pressable
+    aria-checked={checked}
     accessibilityLabel={label}
     accessibilityRole="checkbox"
-    accessibilityState={{ checked }}
+    accessibilityState={{ checked, disabled }}
+    disabled={disabled}
     onPress={onPress}
     style={[styles.checkOption, checked && styles.checkOptionSelected]}
   >
@@ -85,9 +180,11 @@ const CheckOption = ({
 );
 
 const StarterGoalOptions = ({
+  disabled,
   selectedIds,
   toggle,
 }: {
+  disabled: boolean;
   selectedIds: readonly string[];
   toggle(id: string): void;
 }) => (
@@ -96,9 +193,11 @@ const StarterGoalOptions = ({
       const checked = selectedIds.includes(goal.id);
       return (
         <Pressable
+          aria-checked={checked}
           accessibilityLabel={`Select starter goal ${goal.title}`}
           accessibilityRole="checkbox"
-          accessibilityState={{ checked }}
+          accessibilityState={{ checked, disabled }}
+          disabled={disabled}
           key={goal.id}
           onPress={() => toggle(goal.id)}
           style={[styles.starterOption, checked && styles.starterSelected]}
@@ -115,9 +214,11 @@ const StarterGoalOptions = ({
 );
 
 const StarterRewardOptions = ({
+  disabled,
   selectedIds,
   toggle,
 }: {
+  disabled: boolean;
   selectedIds: readonly string[];
   toggle(id: string): void;
 }) => (
@@ -126,9 +227,11 @@ const StarterRewardOptions = ({
       const checked = selectedIds.includes(reward.id);
       return (
         <Pressable
+          aria-checked={checked}
           accessibilityLabel={`Select starter reward ${reward.title}`}
           accessibilityRole="checkbox"
-          accessibilityState={{ checked }}
+          accessibilityState={{ checked, disabled }}
+          disabled={disabled}
           key={reward.id}
           onPress={() => toggle(reward.id)}
           style={[styles.starterOption, checked && styles.starterSelected]}
@@ -152,14 +255,12 @@ export function OnboardingWizard({
   initialOnboarding,
   saveOnboardingDraft,
 }: OnboardingWizardProps) {
-  const [onboarding, setOnboarding] = useState(() => initialStateFor(initialOnboarding));
-  const [step, setStep] = useState<WizardStep>(() => {
-    const initial = initialStateFor(initialOnboarding);
-    return isWizardStep(initial.currentStep) ? initial.currentStep : "adult";
-  });
-  const [draft, setDraft] = useState<OnboardingDraft>(() =>
-    structuredClone(initialDraft ?? createDefaultOnboardingDraft()),
+  const [initialResume] = useState(() =>
+    normalizeOnboardingResume(initialDraft, initialOnboarding),
   );
+  const [onboarding, setOnboarding] = useState(initialResume.onboarding);
+  const [step, setStep] = useState<WizardStep>(initialResume.step);
+  const [draft, setDraft] = useState<OnboardingDraft>(initialResume.draft);
   const [childPins, setChildPins] = useState<Record<string, string>>({});
   const [childName, setChildName] = useState("");
   const [childMode, setChildMode] = useState<ExperienceMode | null>(null);
@@ -170,13 +271,16 @@ export function OnboardingWizard({
   const sequence = useRef(0);
   const savingRef = useRef(false);
   const completionStarted = useRef(false);
+  const locked = busy || saving;
 
   const updateDraft = (next: Partial<OnboardingDraft>) => {
+    if (locked || savingRef.current || completionStarted.current) return;
     setDraft((current) => ({ ...current, ...next }));
     setValidationError(null);
   };
 
   const toggleId = (key: "selectedStarterGoalIds" | "selectedStarterRewardIds", id: string) => {
+    if (locked || savingRef.current || completionStarted.current) return;
     const selected = draft[key];
     updateDraft({
       [key]: selected.includes(id) ? selected.filter((item) => item !== id) : [...selected, id],
@@ -262,6 +366,7 @@ export function OnboardingWizard({
   };
 
   const addChild = () => {
+    if (locked || savingRef.current || completionStarted.current) return;
     const displayName = childName.trim();
     if (!displayName) {
       setValidationError("Enter a child name.");
@@ -298,6 +403,7 @@ export function OnboardingWizard({
   };
 
   const removeChild = (clientId: string) => {
+    if (locked || savingRef.current || completionStarted.current) return;
     updateDraft({
       childDrafts: draft.childDrafts.filter((child) => child.clientId !== clientId),
     });
@@ -348,13 +454,22 @@ export function OnboardingWizard({
         </View>
         <Card style={styles.card}>
           <OnboardingProgress step={step} />
+          {initialResume.notice ? (
+            <View style={styles.recoveryNotice}>
+              <Text accessibilityRole="alert" style={styles.recoveryNoticeText}>
+                {initialResume.notice}
+              </Text>
+            </View>
+          ) : null}
 
           {step === "adult" ? (
             <>
               <Text style={styles.title}>Let’s start with you.</Text>
               <Text style={styles.copy}>Choose the name your family will see around Fovari.</Text>
               <FormField
+                accessibilityState={{ disabled: locked }}
                 autoCapitalize="words"
+                editable={!locked}
                 label="Your display name"
                 onChangeText={(adultDisplayName) => updateDraft({ adultDisplayName })}
                 placeholder="Example: Morgan"
@@ -370,13 +485,17 @@ export function OnboardingWizard({
                 You can change these local preferences later from family settings.
               </Text>
               <FormField
+                accessibilityState={{ disabled: locked }}
                 autoCapitalize="words"
+                editable={!locked}
                 label="Family name"
                 onChangeText={(familyName) => updateDraft({ familyName })}
                 placeholder="Example: The Park Family"
                 value={draft.familyName}
               />
               <FormField
+                accessibilityState={{ disabled: locked }}
+                editable={!locked}
                 label="Family points name"
                 onChangeText={(pointsName) => updateDraft({ pointsName })}
                 value={draft.pointsName}
@@ -402,6 +521,8 @@ export function OnboardingWizard({
                   </View>
                   <Button
                     accessibilityLabel={`Remove ${child.displayName}`}
+                    accessibilityState={{ disabled: locked }}
+                    disabled={locked}
                     onPress={() => removeChild(child.clientId)}
                     tone="quiet"
                   >
@@ -411,9 +532,12 @@ export function OnboardingWizard({
               ))}
               <View style={styles.childComposer}>
                 <FormField
+                  accessibilityState={{ disabled: locked }}
                   autoCapitalize="words"
+                  editable={!locked}
                   label="Child name"
                   onChangeText={(value) => {
+                    if (locked || savingRef.current || completionStarted.current) return;
                     setChildName(value);
                     setValidationError(null);
                   }}
@@ -421,7 +545,9 @@ export function OnboardingWizard({
                   value={childName}
                 />
                 <ExperienceModePicker
+                  disabled={locked}
                   onChange={(mode) => {
+                    if (locked || savingRef.current || completionStarted.current) return;
                     setChildMode(mode);
                     setValidationError(null);
                   }}
@@ -429,8 +555,10 @@ export function OnboardingWizard({
                 />
                 <CheckOption
                   checked={pinRequested}
+                  disabled={locked}
                   label="Use a PIN for this child"
                   onPress={() => {
+                    if (locked || savingRef.current || completionStarted.current) return;
                     setPinRequested((current) => !current);
                     setPendingPin("");
                     setValidationError(null);
@@ -438,10 +566,13 @@ export function OnboardingWizard({
                 />
                 {pinRequested ? (
                   <FormField
+                    accessibilityState={{ disabled: locked }}
+                    editable={!locked}
                     keyboardType="number-pad"
                     label="Child PIN"
                     maxLength={6}
                     onChangeText={(value) => {
+                      if (locked || savingRef.current || completionStarted.current) return;
                       setPendingPin(value.replace(/\D/g, ""));
                       setValidationError(null);
                     }}
@@ -450,7 +581,13 @@ export function OnboardingWizard({
                     value={pendingPin}
                   />
                 ) : null}
-                <Button onPress={addChild} tone="secondary">
+                <Button
+                  accessibilityLabel="Add child"
+                  accessibilityState={{ disabled: locked }}
+                  disabled={locked}
+                  onPress={addChild}
+                  tone="secondary"
+                >
                   Add child
                 </Button>
               </View>
@@ -464,6 +601,7 @@ export function OnboardingWizard({
                 Pick at least one practice routine. A copy is created for every child.
               </Text>
               <StarterGoalOptions
+                disabled={locked}
                 selectedIds={draft.selectedStarterGoalIds}
                 toggle={(id) => toggleId("selectedStarterGoalIds", id)}
               />
@@ -477,6 +615,7 @@ export function OnboardingWizard({
                 Start with something simple and family-approved. You can add more later.
               </Text>
               <StarterRewardOptions
+                disabled={locked}
                 selectedIds={draft.selectedStarterRewardIds}
                 toggle={(id) => toggleId("selectedStarterRewardIds", id)}
               />
@@ -491,6 +630,7 @@ export function OnboardingWizard({
               </Text>
               <CheckOption
                 checked={draft.notificationPreferences.enabled}
+                disabled={locked}
                 label="Enable family notifications"
                 onPress={() =>
                   updateDraft({
@@ -503,6 +643,7 @@ export function OnboardingWizard({
               />
               <CheckOption
                 checked={draft.notificationPreferences.approvalUpdates}
+                disabled={locked}
                 label="Approval updates"
                 onPress={() =>
                   updateDraft({
@@ -515,6 +656,7 @@ export function OnboardingWizard({
               />
               <CheckOption
                 checked={draft.notificationPreferences.childEncouragement}
+                disabled={locked}
                 label="Child encouragement"
                 onPress={() =>
                   updateDraft({
@@ -527,6 +669,7 @@ export function OnboardingWizard({
               />
               <CheckOption
                 checked={draft.notificationPreferences.weeklySummary}
+                disabled={locked}
                 label="Weekly family summary"
                 onPress={() =>
                   updateDraft({
@@ -585,11 +728,14 @@ export function OnboardingWizard({
                 .filter((child) => child.pinRequested)
                 .map((child) => (
                   <FormField
+                    accessibilityState={{ disabled: locked }}
+                    editable={!locked}
                     key={child.clientId}
                     keyboardType="number-pad"
                     label={`PIN for ${child.displayName}`}
                     maxLength={6}
                     onChangeText={(value) => {
+                      if (locked || savingRef.current || completionStarted.current) return;
                       setChildPins((current) => ({
                         ...current,
                         [child.clientId]: value.replace(/\D/g, ""),
@@ -611,6 +757,9 @@ export function OnboardingWizard({
           ) : null}
           <View style={styles.actions}>
             <Button
+              accessibilityLabel={action}
+              accessibilityState={{ disabled: locked }}
+              disabled={locked}
               loading={busy || saving}
               onPress={() => void (step === "review" ? finishSetup() : continueStep())}
               style={styles.continueButton}
@@ -779,6 +928,20 @@ const styles = StyleSheet.create({
     color: colors.ink,
     fontSize: 15,
     fontWeight: "700",
+  },
+  recoveryNotice: {
+    backgroundColor: colors.lavender,
+    borderColor: colors.purple,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    marginBottom: spacing.lg,
+    padding: spacing.md,
+  },
+  recoveryNoticeText: {
+    color: colors.purpleDark,
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 19,
   },
   shell: {
     alignSelf: "center",

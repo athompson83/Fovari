@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDemoSeed } from "../../data/fixtures";
-import { OnboardingWizard } from "./OnboardingWizard";
+import { createDefaultOnboardingDraft, OnboardingWizard } from "./OnboardingWizard";
 
 const clickContinue = async () => {
   const progress = screen.getByRole("progressbar").getAttribute("aria-label") ?? "";
@@ -273,6 +273,301 @@ describe("OnboardingWizard", () => {
     fireEvent.change(screen.getByLabelText("PIN for Maya"), { target: { value: "2" } });
 
     expect(screen.getByLabelText("PIN for Maya")).toBeInTheDocument();
+  });
+
+  it("keeps the saved draft immutable while a step save is pending", async () => {
+    let resolveFirstSave: ((value: unknown) => void) | undefined;
+    const firstSave = new Promise((resolve) => {
+      resolveFirstSave = resolve;
+    });
+    const saveOnboardingDraft = vi
+      .fn()
+      .mockImplementationOnce(() => firstSave)
+      .mockResolvedValue(createDemoSeed());
+
+    render(
+      <OnboardingWizard
+        busy={false}
+        completeFamilySetup={vi.fn()}
+        error={null}
+        initialDraft={null}
+        saveOnboardingDraft={saveOnboardingDraft}
+      />,
+    );
+
+    const adultInput = screen.getByLabelText("Your display name");
+    fireEvent.change(adultInput, { target: { value: "Morgan" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    await waitFor(() => expect(adultInput).toHaveAttribute("aria-disabled", "true"));
+    fireEvent.change(adultInput, { target: { value: "Changed while saving" } });
+    expect(adultInput).toHaveValue("Morgan");
+
+    await act(async () => resolveFirstSave?.(createDemoSeed()));
+    await screen.findByLabelText("Family name");
+    fireEvent.change(screen.getByLabelText("Family name"), {
+      target: { value: "The Park Family" },
+    });
+    await clickContinue();
+
+    expect(saveOnboardingDraft.mock.calls[1]?.[0].draft.adultDisplayName).toBe("Morgan");
+  });
+
+  it.each([
+    {
+      controls: ["Your display name", "Continue"],
+      draft: createDefaultOnboardingDraft(),
+      name: "adult",
+      onboarding: {
+        completedSteps: [] as const,
+        currentStep: "adult" as const,
+        status: "not_started" as const,
+      },
+    },
+    {
+      controls: ["Family name", "Family points name", "Continue"],
+      draft: createDefaultDraftForReview(),
+      name: "family",
+      onboarding: {
+        completedSteps: ["adult"] as const,
+        currentStep: "family" as const,
+        status: "in_progress" as const,
+      },
+    },
+    {
+      controls: [
+        "Remove Maya",
+        "Child name",
+        "Explorer ages 4 to 7",
+        "Use a PIN for this child",
+        "Add child",
+        "Continue",
+      ],
+      draft: {
+        ...createDefaultDraftForReview(),
+        childDrafts: [
+          {
+            clientId: "draft-maya",
+            displayName: "Maya",
+            experienceMode: "explorer" as const,
+            pinRequested: false,
+          },
+        ],
+      },
+      name: "children",
+      onboarding: {
+        completedSteps: ["adult", "family"] as const,
+        currentStep: "children" as const,
+        status: "in_progress" as const,
+      },
+    },
+    {
+      controls: ["Select starter goal Read together", "Continue"],
+      draft: createDefaultDraftForReview(),
+      name: "starter goals",
+      onboarding: {
+        completedSteps: ["adult", "family", "children"] as const,
+        currentStep: "starter_goals" as const,
+        status: "in_progress" as const,
+      },
+    },
+    {
+      controls: ["Select starter reward Family movie night", "Continue"],
+      draft: createDefaultDraftForReview(),
+      name: "starter rewards",
+      onboarding: {
+        completedSteps: ["adult", "family", "children", "starter_goals"] as const,
+        currentStep: "starter_rewards" as const,
+        status: "in_progress" as const,
+      },
+    },
+    {
+      controls: ["Enable family notifications", "Approval updates", "Continue"],
+      draft: createDefaultDraftForReview(),
+      name: "notifications",
+      onboarding: {
+        completedSteps: [
+          "adult",
+          "family",
+          "children",
+          "starter_goals",
+          "starter_rewards",
+        ] as const,
+        currentStep: "notifications" as const,
+        status: "in_progress" as const,
+      },
+    },
+    {
+      controls: ["PIN for Maya", "Create my family"],
+      draft: {
+        ...createDefaultDraftForReview(),
+        childDrafts: [
+          {
+            clientId: "draft-maya",
+            displayName: "Maya",
+            experienceMode: "explorer" as const,
+            pinRequested: true,
+          },
+        ],
+      },
+      name: "review",
+      onboarding: {
+        completedSteps: [
+          "adult",
+          "family",
+          "children",
+          "starter_goals",
+          "starter_rewards",
+          "notifications",
+        ] as const,
+        currentStep: "review" as const,
+        status: "in_progress" as const,
+      },
+    },
+  ])("marks every $name mutation disabled while busy", ({ controls, draft, onboarding }) => {
+    render(
+      <OnboardingWizard
+        busy
+        completeFamilySetup={vi.fn()}
+        error={null}
+        initialDraft={draft}
+        initialOnboarding={onboarding}
+        saveOnboardingDraft={vi.fn()}
+      />,
+    );
+
+    for (const label of controls) {
+      expect(screen.getByLabelText(label)).toHaveAttribute("aria-disabled", "true");
+    }
+  });
+
+  it("rewinds an out-of-order completed-step ledger to its safe canonical prefix", async () => {
+    const saveOnboardingDraft = vi.fn().mockResolvedValue(createDemoSeed());
+    render(
+      <OnboardingWizard
+        busy={false}
+        completeFamilySetup={vi.fn()}
+        error={null}
+        initialDraft={createDefaultDraftForReview()}
+        initialOnboarding={{
+          completedSteps: ["adult", "children", "family"],
+          currentStep: "starter_rewards",
+          status: "in_progress",
+        }}
+        saveOnboardingDraft={saveOnboardingDraft}
+      />,
+    );
+
+    expect(screen.getByLabelText("Family name")).toHaveValue("The Park Family");
+    expect(screen.getByText(/We repaired your saved setup/)).toBeInTheDocument();
+    await clickContinue();
+
+    expect(saveOnboardingDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
+        onboarding: {
+          completedSteps: ["adult", "family"],
+          currentStep: "children",
+          status: "in_progress",
+        },
+      }),
+    );
+  });
+
+  it.each([
+    {
+      expectedSelection: ["starter-reading"],
+      ids: ["starter-reading", "stale-goal"],
+      label: "goal",
+      title: "Choose a starter goal",
+    },
+    {
+      expectedSelection: ["starter-movie"],
+      ids: ["starter-movie", "stale-reward"],
+      label: "reward",
+      title: "Choose a starter reward",
+    },
+  ])(
+    "filters a stale starter $label and rewinds review for correction",
+    async ({ expectedSelection, ids, label, title }) => {
+      const base = createDefaultDraftForReview();
+      const saveOnboardingDraft = vi.fn().mockResolvedValue(createDemoSeed());
+      const initialDraft =
+        label === "goal"
+          ? { ...base, selectedStarterGoalIds: ids }
+          : { ...base, selectedStarterRewardIds: ids };
+
+      render(
+        <OnboardingWizard
+          busy={false}
+          completeFamilySetup={vi.fn()}
+          error={null}
+          initialDraft={initialDraft}
+          initialOnboarding={{
+            completedSteps: [
+              "adult",
+              "family",
+              "children",
+              "starter_goals",
+              "starter_rewards",
+              "notifications",
+            ],
+            currentStep: "review",
+            status: "in_progress",
+          }}
+          saveOnboardingDraft={saveOnboardingDraft}
+        />,
+      );
+
+      expect(screen.getByText(title)).toBeInTheDocument();
+      expect(screen.getByText(/We repaired your saved setup/)).toBeInTheDocument();
+      const selectedControl = screen.getByLabelText(
+        label === "goal"
+          ? "Select starter goal Read together"
+          : "Select starter reward Family movie night",
+      );
+      expect(selectedControl).toHaveAttribute("aria-checked", "true");
+      expect(screen.queryByText(ids[1]!)).not.toBeInTheDocument();
+      await clickContinue();
+      expect(saveOnboardingDraft).toHaveBeenCalledWith(
+        expect.objectContaining({
+          draft: expect.objectContaining(
+            label === "goal"
+              ? { selectedStarterGoalIds: expectedSelection }
+              : { selectedStarterRewardIds: expectedSelection },
+          ),
+        }),
+      );
+    },
+  );
+
+  it("rewinds a later resume with a missing starter reward", () => {
+    render(
+      <OnboardingWizard
+        busy={false}
+        completeFamilySetup={vi.fn()}
+        error={null}
+        initialDraft={{
+          ...createDefaultDraftForReview(),
+          selectedStarterRewardIds: [],
+        }}
+        initialOnboarding={{
+          completedSteps: [
+            "adult",
+            "family",
+            "children",
+            "starter_goals",
+            "starter_rewards",
+            "notifications",
+          ],
+          currentStep: "review",
+          status: "in_progress",
+        }}
+        saveOnboardingDraft={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Choose a starter reward")).toBeInTheDocument();
+    expect(screen.getByText(/We repaired your saved setup/)).toBeInTheDocument();
   });
 });
 

@@ -3,8 +3,8 @@ import { useRef } from "react";
 import { Alert } from "react-native";
 
 import { WelcomeScreen } from "../src/components/WelcomeScreen";
-import { createDemoSeed } from "../src/data/fixtures";
 import { LoadingState } from "../src/components/LoadingState";
+import { isUntouchedDemoSnapshot } from "../src/features/onboarding/demo-baseline";
 import { createLocalCommandId, useFamilyAction, useFamilySnapshot } from "../src/hooks/use-family";
 
 export default function WelcomeRoute() {
@@ -60,16 +60,25 @@ export default function WelcomeRoute() {
     }
   };
 
-  const demo = createDemoSeed();
-  const hasPersistedCustomSetup =
-    snapshot.onboardingDraft !== null ||
-    snapshot.familyName !== demo.familyName ||
-    snapshot.adult.displayName !== demo.adult.displayName ||
-    snapshot.children.map(({ id, name }) => `${id}:${name}`).join("|") !==
-      demo.children.map(({ id, name }) => `${id}:${name}`).join("|");
+  const untouchedDemo = isUntouchedDemoSnapshot(snapshot);
+
+  const requestCreateFamily = () => {
+    if (untouchedDemo) {
+      void createFamily();
+      return;
+    }
+    Alert.alert(
+      "Start over with a new family?",
+      "Starting over will replace the family setup saved on this device.",
+      [
+        { style: "cancel", text: "Keep my family" },
+        { onPress: () => void createFamily(), style: "destructive", text: "Start over" },
+      ],
+    );
+  };
 
   const requestDemo = () => {
-    if (!hasPersistedCustomSetup) {
+    if (untouchedDemo) {
       void openDemo();
       return;
     }
@@ -101,7 +110,7 @@ export default function WelcomeRoute() {
 
   return (
     <WelcomeScreen
-      onCreateAccount={() => void createFamily()}
+      onCreateAccount={requestCreateFamily}
       onDemo={requestDemo}
       onOpenLink={(label) =>
         router.push({

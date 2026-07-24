@@ -21,11 +21,16 @@ const modes: readonly {
 ];
 
 interface ExperienceModePickerProps {
+  disabled?: boolean;
   onChange(mode: ExperienceMode): void;
   value: ExperienceMode | null;
 }
 
-export function ExperienceModePicker({ onChange, value }: ExperienceModePickerProps) {
+export function ExperienceModePicker({
+  disabled = false,
+  onChange,
+  value,
+}: ExperienceModePickerProps) {
   return (
     <View accessibilityRole="radiogroup" style={styles.grid}>
       {modes.map(({ accessibilityAge, ageLabel, emoji, mode }) => {
@@ -33,9 +38,11 @@ export function ExperienceModePicker({ onChange, value }: ExperienceModePickerPr
         const selected = value === mode;
         return (
           <Pressable
+            aria-checked={selected}
             accessibilityLabel={`${tokens.label} ages ${accessibilityAge}`}
             accessibilityRole="radio"
-            accessibilityState={{ checked: selected }}
+            accessibilityState={{ checked: selected, disabled }}
+            disabled={disabled}
             key={mode}
             onPress={() => onChange(mode)}
             style={[
