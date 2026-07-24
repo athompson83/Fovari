@@ -85,16 +85,8 @@ export default function KioskRoute() {
             ))}
           </Card>
           <Button
-            onPress={() =>
-              void run(() =>
-                repository
-                  .switchActor({ childId: active.id, id: active.id, role: "child" })
-                  .then((next) => {
-                    router.replace("/(child)/(tabs)/home");
-                    return next;
-                  }),
-              )
-            }
+            accessibilityLabel={`Open ${active.name}'s space`}
+            onPress={() => router.push(`/(child)/unlock?childId=${encodeURIComponent(active.id)}`)}
           >
             Open {active.name}’s space
           </Button>

@@ -15,14 +15,9 @@ export default function FamilyRoute() {
     return <LoadingState />;
   }
 
-  const handoff = async (childId: string) => {
-    const child = snapshot.children.find((item) => item.id === childId);
-    if (!child) return;
-    await run(async () => {
-      await repository.selectChild(childId);
-      return repository.switchActor({ childId, id: childId, role: "child" });
-    });
-    router.replace("/(child)/(tabs)/home");
+  const handoff = async () => {
+    await run(() => repository.signOut());
+    router.replace("/(child)/select-profile");
   };
 
   return (
@@ -35,7 +30,7 @@ export default function FamilyRoute() {
       />
       <ParentDashboard
         onAdd={() => router.push("/(parent)/(tabs)/add")}
-        onHandoff={(childId) => void handoff(childId)}
+        onHandoff={() => void handoff()}
         onOpenApprovals={() => router.push("/(parent)/approvals")}
         snapshot={snapshot}
       />
