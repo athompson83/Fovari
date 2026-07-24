@@ -25,6 +25,7 @@ import {
   createMemoryStorage,
   readLocalEnvelope,
   type KeyValueStorage,
+  type LocalFamilyEnvelopeV1,
   writeLocalEnvelope,
 } from "./local-storage";
 
@@ -38,17 +39,22 @@ interface StorageFailureRule {
   error: Error;
   key: string;
   operation: "remove" | "set";
+  skip?: number;
 }
 
 const createFailureStorage = () => {
   const base = createMemoryStorage();
   const failures: StorageFailureRule[] = [];
   const takeFailure = (operation: StorageFailureRule["operation"], key: string) => {
-    const index = failures.findIndex(
-      (failure) => failure.operation === operation && failure.key === key,
-    );
-    if (index < 0) return undefined;
-    return failures.splice(index, 1)[0];
+    for (const [index, failure] of failures.entries()) {
+      if (failure.operation !== operation || failure.key !== key) continue;
+      if ((failure.skip ?? 0) > 0) {
+        failure.skip = (failure.skip ?? 0) - 1;
+        return undefined;
+      }
+      return failures.splice(index, 1)[0];
+    }
+    return undefined;
   };
   const storage: KeyValueStorage = {
     getItem: base.getItem,
@@ -315,6 +321,7 @@ describe("LocalFamilyRepository", () => {
         idempotencyKey: "begin-invalid-later-pin",
       }),
     );
+    randomId.mockClear();
     const draft = createSetupDraft({
       childDrafts: [
         {
@@ -570,6 +577,7 @@ describe("LocalFamilyRepository", () => {
       error: new Error("envelope write failed"),
       key: "fovari.local-family",
       operation: "set",
+      skip: 1,
     });
 
     await expect(
@@ -627,6 +635,7 @@ describe("LocalFamilyRepository", () => {
       error: new Error("begin envelope write failed"),
       key: "fovari.local-family",
       operation: "set",
+      skip: 1,
     });
 
     await expect(
@@ -657,6 +666,7 @@ describe("LocalFamilyRepository", () => {
       error: new Error("reset envelope write failed"),
       key: "fovari.local-family",
       operation: "set",
+      skip: 1,
     });
 
     await expect(
@@ -762,6 +772,7 @@ describe("LocalFamilyRepository", () => {
       error: new Error("complete envelope write failed"),
       key: "fovari.local-family",
       operation: "set",
+      skip: 1,
     });
 
     await expect(
@@ -991,6 +1002,385 @@ describe("LocalFamilyRepository", () => {
       }),
     );
     expect(next.rewards.at(-1)?.id).toBe("90000000-0000-4000-8000-000000000002");
+  });
+
+  it("treats an ordinary write-then-throw mutation as committed after exact readback", async () => {
+    const failures = createFailureStorage();
+    const { pinVault, repository } = createRepositoryWithStorage(failures.storage);
+    const input = {
+      eligibleChildIds: [DEMO_IDS.alex],
+      pointCost: 25,
+      title: "Ambiguous committed reward",
+      type: "privilege" as const,
+    };
+    const context = createCommandContext({
+      actorId: DEMO_IDS.parent,
+      familyId: DEMO_IDS.family,
+      idempotencyKey: "ambiguous-ordinary-commit",
+    });
+    failures.failNext({
+      after: true,
+      error: new Error("write acknowledged late"),
+      key: "fovari.local-family",
+      operation: "set",
+    });
+
+    const committed = await repository.createReward(input, context);
+    expect(committed.rewards.at(-1)?.id).toBe("90000000-0000-4000-8000-000000000001");
+
+    const restored = createLocalFamilyRepository({
+      pinVault,
+      seed: createDemoSeed(),
+      storage: failures.storage,
+    });
+    expect((await restored.getSnapshot()).rewards.at(-1)?.title).toBe(input.title);
+    await expect(restored.createReward(input, context)).rejects.toThrow("already processed");
+  });
+
+  it("surfaces an explicit inconsistent state when an ordinary write cannot be read back", async () => {
+    const base = createMemoryStorage();
+    let failReadback = false;
+    const storage: KeyValueStorage = {
+      async getItem(key) {
+        if (failReadback && key === "fovari.local-family") {
+          throw new Error("readback unavailable");
+        }
+        return base.getItem(key);
+      },
+      removeItem: base.removeItem,
+      async setItem(key, value) {
+        if (key === "fovari.local-family") {
+          failReadback = true;
+          throw new Error("write outcome unknown");
+        }
+        await base.setItem(key, value);
+      },
+    };
+    const { repository } = createRepositoryWithStorage(storage);
+
+    await expect(
+      repository.createReward(
+        {
+          eligibleChildIds: [DEMO_IDS.alex],
+          pointCost: 25,
+          title: "Unreadable commit",
+          type: "privilege",
+        },
+        createCommandContext({
+          actorId: DEMO_IDS.parent,
+          familyId: DEMO_IDS.family,
+          idempotencyKey: "unreadable-ordinary-commit",
+        }),
+      ),
+    ).rejects.toThrow("Inconsistent local demo envelope state after ambiguous write");
+  });
+
+  it("reads back a late-acknowledged marker before applying credential effects", async () => {
+    const failures = createFailureStorage();
+    const { pinVault, repository } = createRepositoryWithStorage(failures.storage);
+    failures.failNext({
+      after: true,
+      error: new Error("marker acknowledged late"),
+      key: "fovari.local-family",
+      operation: "set",
+    });
+
+    const configured = await repository.configureChildPin(
+      { childId: DEMO_IDS.alex, pin: "2468" },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "late-marker-configure",
+      }),
+    );
+
+    expect(configured.children.find((child) => child.id === DEMO_IDS.alex)?.pinConfigured).toBe(
+      true,
+    );
+    expect(await pinVault.verify(DEMO_IDS.alex, "2468")).toBe(true);
+    expect(await pinVault.getPendingTransactionId()).toBeNull();
+  });
+
+  it("does not apply credential effects when the marker is confirmed uncommitted", async () => {
+    const failures = createFailureStorage();
+    const { pinVault, repository } = createRepositoryWithStorage(failures.storage);
+    failures.failNext({
+      error: new Error("marker rejected"),
+      key: "fovari.local-family",
+      operation: "set",
+    });
+
+    await expect(
+      repository.configureChildPin(
+        { childId: DEMO_IDS.alex, pin: "2468" },
+        createCommandContext({
+          actorId: DEMO_IDS.parent,
+          familyId: DEMO_IDS.family,
+          idempotencyKey: "rejected-marker-configure",
+        }),
+      ),
+    ).rejects.toThrow("marker rejected");
+
+    expect(await pinVault.isConfigured(DEMO_IDS.alex)).toBe(false);
+    expect(await pinVault.getPendingTransactionId()).toBeNull();
+  });
+
+  it("keeps a configured PIN when its final envelope write throws after committing", async () => {
+    const failures = createFailureStorage();
+    const { pinVault, repository } = createRepositoryWithStorage(failures.storage);
+    failures.failNext({
+      after: true,
+      error: new Error("configure write acknowledged late"),
+      key: "fovari.local-family",
+      operation: "set",
+      skip: 1,
+    });
+
+    const configured = await repository.configureChildPin(
+      { childId: DEMO_IDS.alex, pin: "2468" },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "ambiguous-configure-commit",
+      }),
+    );
+
+    expect(configured.children.find((child) => child.id === DEMO_IDS.alex)?.pinConfigured).toBe(
+      true,
+    );
+    expect(await pinVault.verify(DEMO_IDS.alex, "2468")).toBe(true);
+  });
+
+  it("keeps begin replacement committed after its final envelope write-then-throw", async () => {
+    const failures = createFailureStorage();
+    const { pinVault, repository } = createRepositoryWithStorage(failures.storage);
+    await repository.configureChildPin(
+      { childId: DEMO_IDS.alex, pin: "2468" },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "configure-before-ambiguous-begin",
+      }),
+    );
+    failures.failNext({
+      after: true,
+      error: new Error("begin write acknowledged late"),
+      key: "fovari.local-family",
+      operation: "set",
+      skip: 1,
+    });
+
+    const begun = await repository.beginFamilySetup(
+      { adultDisplayName: "Morgan" },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "ambiguous-begin-commit",
+      }),
+    );
+
+    expect(begun.children).toEqual([]);
+    expect(await pinVault.isConfigured(DEMO_IDS.alex)).toBe(false);
+  });
+
+  it("keeps completed setup committed after its final envelope write-then-throw", async () => {
+    const failures = createFailureStorage();
+    const { pinVault, repository } = createRepositoryWithStorage(failures.storage);
+    await repository.beginFamilySetup(
+      { adultDisplayName: "Morgan" },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "begin-before-ambiguous-complete",
+      }),
+    );
+    failures.failNext({
+      after: true,
+      error: new Error("complete write acknowledged late"),
+      key: "fovari.local-family",
+      operation: "set",
+      skip: 1,
+    });
+
+    const completed = await repository.completeFamilySetup(
+      { childPins: { "draft-maya": "2468" }, draft: createSetupDraft() },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "ambiguous-complete-commit",
+      }),
+    );
+
+    expect(completed.familyName).toBe("The Park Family");
+    expect(await pinVault.verify(completed.children[0]!.id, "2468")).toBe(true);
+  });
+
+  it("keeps reset committed after its final envelope write-then-throw", async () => {
+    const failures = createFailureStorage();
+    const { pinVault, repository } = createRepositoryWithStorage(failures.storage);
+    await repository.configureChildPin(
+      { childId: DEMO_IDS.alex, pin: "2468" },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "configure-before-ambiguous-reset",
+      }),
+    );
+    failures.failNext({
+      after: true,
+      error: new Error("reset write acknowledged late"),
+      key: "fovari.local-family",
+      operation: "set",
+      skip: 1,
+    });
+
+    expect(
+      await repository.resetDemo(
+        createCommandContext({
+          actorId: DEMO_IDS.parent,
+          familyId: DEMO_IDS.family,
+          idempotencyKey: "ambiguous-reset-commit",
+        }),
+      ),
+    ).toEqual(createDemoSeed());
+    expect(await pinVault.isConfigured(DEMO_IDS.alex)).toBe(false);
+  });
+
+  it("rolls back a pending credential journal and marker during process recreation", async () => {
+    const storage = createMemoryStorage();
+    const { pinVault, repository } = createRepositoryWithStorage(storage);
+    await repository.configureChildPin(
+      { childId: DEMO_IDS.alex, pin: "2468" },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "configure-before-restart-rollback",
+      }),
+    );
+    const transactionId = await pinVault.beginTransaction([DEMO_IDS.alex]);
+    const envelope = await readLocalEnvelope(storage, createDemoSeed());
+    await writeLocalEnvelope(storage, {
+      ...envelope,
+      pendingCredentialTransactionId: transactionId,
+    });
+    await pinVault.set(DEMO_IDS.alex, "1357");
+
+    const recreated = createLocalFamilyRepository({
+      pinVault: createChildPinVault({
+        digest: testDigest,
+        randomId: () => "restart-salt",
+        storage,
+      }),
+      seed: createDemoSeed(),
+      storage,
+    });
+    await recreated.getSnapshot();
+
+    expect(await pinVault.verify(DEMO_IDS.alex, "2468")).toBe(true);
+    expect(await pinVault.verify(DEMO_IDS.alex, "1357")).toBe(false);
+    expect(
+      (await readLocalEnvelope(storage, createDemoSeed())).pendingCredentialTransactionId,
+    ).toBeUndefined();
+    expect(await pinVault.getPendingTransactionId()).toBeNull();
+  });
+
+  it("finalizes an orphan journal when the final envelope was already committed", async () => {
+    const storage = createMemoryStorage();
+    const { pinVault, repository } = createRepositoryWithStorage(storage);
+    await repository.configureChildPin(
+      { childId: DEMO_IDS.alex, pin: "2468" },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "configure-before-finalized-restart",
+      }),
+    );
+    const transactionId = await pinVault.beginTransaction([DEMO_IDS.alex]);
+    const marked = {
+      ...(await readLocalEnvelope(storage, createDemoSeed())),
+      pendingCredentialTransactionId: transactionId,
+    };
+    await writeLocalEnvelope(storage, marked);
+    await pinVault.remove(DEMO_IDS.alex);
+    const finalEnvelope: LocalFamilyEnvelopeV1 = {
+      ...marked,
+      snapshot: {
+        ...marked.snapshot,
+        children: marked.snapshot.children.map((child) =>
+          child.id === DEMO_IDS.alex ? { ...child, pinConfigured: false } : child,
+        ),
+      },
+    };
+    delete finalEnvelope.pendingCredentialTransactionId;
+    await writeLocalEnvelope(storage, finalEnvelope);
+
+    const recreatedVault = createChildPinVault({
+      digest: testDigest,
+      randomId: () => "restart-final-salt",
+      storage,
+    });
+    const recreated = createLocalFamilyRepository({
+      pinVault: recreatedVault,
+      seed: createDemoSeed(),
+      storage,
+    });
+    const snapshot = await recreated.getSnapshot();
+
+    expect(snapshot.children.find((child) => child.id === DEMO_IDS.alex)?.pinConfigured).toBe(
+      false,
+    );
+    expect(await recreatedVault.isConfigured(DEMO_IDS.alex)).toBe(false);
+    expect(await recreatedVault.getPendingTransactionId()).toBeNull();
+  });
+
+  it("finalizes a journal created before its envelope marker without changing credentials", async () => {
+    const storage = createMemoryStorage();
+    const { pinVault, repository } = createRepositoryWithStorage(storage);
+    await repository.configureChildPin(
+      { childId: DEMO_IDS.alex, pin: "2468" },
+      createCommandContext({
+        actorId: DEMO_IDS.parent,
+        familyId: DEMO_IDS.family,
+        idempotencyKey: "configure-before-orphan-journal",
+      }),
+    );
+    await pinVault.beginTransaction([DEMO_IDS.alex]);
+
+    const recreatedVault = createChildPinVault({
+      digest: testDigest,
+      randomId: () => "restart-orphan-salt",
+      storage,
+    });
+    const recreated = createLocalFamilyRepository({
+      pinVault: recreatedVault,
+      seed: createDemoSeed(),
+      storage,
+    });
+    await recreated.getSnapshot();
+
+    expect(await recreatedVault.verify(DEMO_IDS.alex, "2468")).toBe(true);
+    expect(await recreatedVault.getPendingTransactionId()).toBeNull();
+  });
+
+  it("rejects a mismatched envelope marker and credential journal", async () => {
+    const storage = createMemoryStorage();
+    const { pinVault, repository } = createRepositoryWithStorage(storage);
+    await repository.getSnapshot();
+    await pinVault.beginTransaction([DEMO_IDS.alex]);
+    const envelope = await readLocalEnvelope(storage, createDemoSeed());
+    await writeLocalEnvelope(storage, {
+      ...envelope,
+      pendingCredentialTransactionId: "pin-tx-different",
+    });
+    const recreated = createLocalFamilyRepository({
+      pinVault,
+      seed: createDemoSeed(),
+      storage,
+    });
+
+    await expect(recreated.getSnapshot()).rejects.toThrow(
+      "Inconsistent local demo credential transaction state",
+    );
   });
 
   it("submits and approves a completion with exactly one immutable point credit", async () => {

@@ -260,6 +260,34 @@ describe("versioned local family storage", () => {
     expect(await storage.getItem("fovari.local-family")).toBeNull();
   });
 
+  it("accepts only a bounded versioned credential transaction marker", async () => {
+    const initial = await readLocalEnvelope(createMemoryStorage(), createDemoSeed());
+    const transactionId = "pin-tx-transaction_123";
+    const validStorage = createMemoryStorage();
+
+    await writeLocalEnvelope(validStorage, {
+      ...initial,
+      pendingCredentialTransactionId: transactionId,
+    });
+    expect(
+      (await readLocalEnvelope(validStorage, createDemoSeed())).pendingCredentialTransactionId,
+    ).toBe(transactionId);
+
+    for (const pendingCredentialTransactionId of [
+      "",
+      "transaction-without-versioned-prefix",
+      `pin-tx-${"x".repeat(129)}`,
+      "pin-tx-invalid space",
+    ]) {
+      await expect(
+        writeLocalEnvelope(createMemoryStorage(), {
+          ...initial,
+          pendingCredentialTransactionId,
+        }),
+      ).rejects.toThrow("Invalid local family data");
+    }
+  });
+
   it("does not write a syntactically valid envelope beyond the local size limit", async () => {
     const storage = createMemoryStorage();
     const initial = await readLocalEnvelope(storage, createDemoSeed());

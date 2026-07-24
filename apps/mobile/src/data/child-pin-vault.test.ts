@@ -87,6 +87,34 @@ describe("child PIN vault", () => {
     });
   });
 
+  it("persists an opaque credential transaction journal that a new vault can roll back", async () => {
+    const storage = createMemoryStorage();
+    let salt = 0;
+    const createVault = () =>
+      createChildPinVault({
+        digest: opaqueDigest,
+        randomId: () => `journal-${++salt}`,
+        storage,
+      });
+    const original = createVault();
+    await original.set("child-journal", "2468");
+
+    const transactionId = await original.beginTransaction(["child-journal"]);
+    await original.set("child-journal", "1357");
+    const serializedJournal = (await storage.getItem("fovari.child-pin.pending-transaction")) ?? "";
+    expect(serializedJournal).not.toContain("2468");
+    expect(serializedJournal).not.toContain("1357");
+
+    const restored = createVault();
+    expect(await restored.getPendingTransactionId()).toBe(transactionId);
+    await restored.rollbackTransaction(transactionId);
+    expect(await restored.verify("child-journal", "2468")).toBe(true);
+    expect(await restored.verify("child-journal", "1357")).toBe(false);
+
+    await restored.finalizeTransaction(transactionId);
+    expect(await restored.getPendingTransactionId()).toBeNull();
+  });
+
   it("stores an opaque salted digest and verifies the matching PIN", async () => {
     const storage = createMemoryStorage();
     const digest = vi.fn(opaqueDigest);

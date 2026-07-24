@@ -8,6 +8,9 @@ import { asyncStorage, type KeyValueStorage } from "./local-storage";
 const MAX_STORED_PIN_LENGTH = 512;
 const MAX_STORED_VALUE_LENGTH = 128;
 const MAX_MANAGED_CHILDREN = 500;
+const MAX_TRANSACTION_LENGTH = 1_000_000;
+const PIN_TRANSACTION_KEY = "fovari.child-pin.pending-transaction";
+const PIN_TRANSACTION_VERSION = 1;
 const PIN_REGISTRY_KEY = "fovari.child-pin.registry";
 const PIN_REGISTRY_VERSION = 1;
 const STORED_PIN_VERSION = 1;
@@ -23,16 +26,27 @@ interface StoredPinRegistry {
   version: 1;
 }
 
+interface StoredPinTransaction {
+  credentials: readonly { childId: string; serialized: string | null }[];
+  id: string;
+  registry: string | null;
+  version: 1;
+}
+
 export interface ChildPinVaultCheckpoint {
   readonly kind: "opaque-child-pin-vault-checkpoint";
 }
 
 export interface ChildPinVault {
+  beginTransaction(childIds?: readonly string[]): Promise<string>;
   checkpoint(childIds?: readonly string[]): Promise<ChildPinVaultCheckpoint>;
+  finalizeTransaction(transactionId: string): Promise<void>;
+  getPendingTransactionId(): Promise<string | null>;
   isConfigured(childId: string): Promise<boolean>;
   listManagedChildIds(): Promise<readonly string[]>;
   remove(childId: string): Promise<void>;
   restore(checkpoint: ChildPinVaultCheckpoint): Promise<void>;
+  rollbackTransaction(transactionId: string): Promise<void>;
   set(childId: string, pin: string): Promise<void>;
   verify(childId: string, pin: string): Promise<boolean>;
 }
@@ -112,6 +126,73 @@ function parseStoredPinRegistry(serialized: string): StoredPinRegistry | null {
   }
 }
 
+const isTransactionId = (value: unknown): value is string =>
+  typeof value === "string" &&
+  value.length <= MAX_STORED_VALUE_LENGTH &&
+  /^pin-tx-[A-Za-z0-9_-]+$/.test(value);
+
+function parseStoredPinTransaction(serialized: string): StoredPinTransaction | null {
+  if (serialized.length > MAX_TRANSACTION_LENGTH) return null;
+  try {
+    const parsed: unknown = JSON.parse(serialized);
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed) ||
+      Object.keys(parsed).length !== 4
+    ) {
+      return null;
+    }
+    const record = parsed as Record<string, unknown>;
+    if (
+      record.version !== PIN_TRANSACTION_VERSION ||
+      !isTransactionId(record.id) ||
+      !Array.isArray(record.credentials) ||
+      record.credentials.length > MAX_MANAGED_CHILDREN ||
+      !(record.registry === null || typeof record.registry === "string")
+    ) {
+      return null;
+    }
+    if (record.registry !== null && parseStoredPinRegistry(record.registry as string) === null) {
+      return null;
+    }
+    const credentials: { childId: string; serialized: string | null }[] = [];
+    for (const credential of record.credentials) {
+      if (
+        typeof credential !== "object" ||
+        credential === null ||
+        Array.isArray(credential) ||
+        Object.keys(credential).length !== 2
+      ) {
+        return null;
+      }
+      const item = credential as Record<string, unknown>;
+      if (
+        !isStoredValue(item.childId) ||
+        !(item.serialized === null || typeof item.serialized === "string") ||
+        (typeof item.serialized === "string" && parseStoredPin(item.serialized) === null)
+      ) {
+        return null;
+      }
+      credentials.push({
+        childId: item.childId,
+        serialized: item.serialized as string | null,
+      });
+    }
+    if (new Set(credentials.map((item) => item.childId)).size !== credentials.length) {
+      return null;
+    }
+    return {
+      credentials,
+      id: record.id,
+      registry: record.registry as string | null,
+      version: PIN_TRANSACTION_VERSION,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export const expoDigest = (value: string) =>
   Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, value);
 
@@ -161,6 +242,38 @@ export function createChildPinVault(options: ChildPinVaultOptions = {}): ChildPi
     }
   >();
 
+  const inconsistentStorageWrite = (operation: string, cause: unknown, detail: unknown) =>
+    new AggregateError(
+      [cause, detail],
+      `Inconsistent local demo credential state after ambiguous ${operation}.`,
+      { cause },
+    );
+
+  const writeStorageValue = async (key: string, next: string | null) => {
+    const storage = resolveStorage();
+    const prior = await storage.getItem(key);
+    const write = await (next === null ? storage.removeItem(key) : storage.setItem(key, next)).then(
+      () => ({ ok: true as const }),
+      (error: unknown) => ({ error, ok: false as const }),
+    );
+    if (write.ok) return;
+
+    const readback = await storage.getItem(key).then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => ({ error, ok: false as const }),
+    );
+    if (!readback.ok) {
+      throw inconsistentStorageWrite("credential storage write", write.error, readback.error);
+    }
+    if (readback.value === next) return;
+    if (readback.value === prior) throw write.error;
+    throw inconsistentStorageWrite(
+      "credential storage write",
+      write.error,
+      new Error("Credential storage readback matched neither prior nor candidate state."),
+    );
+  };
+
   const readManagedChildIds = async (): Promise<readonly string[]> => {
     const serialized = await resolveStorage().getItem(PIN_REGISTRY_KEY);
     if (!serialized) return [];
@@ -176,7 +289,7 @@ export function createChildPinVault(options: ChildPinVaultOptions = {}): ChildPi
     if (uniqueChildIds.length > MAX_MANAGED_CHILDREN || !uniqueChildIds.every(isStoredValue)) {
       throw new Error("Unable to store the synthetic child PIN registry.");
     }
-    await resolveStorage().setItem(
+    await writeStorageValue(
       PIN_REGISTRY_KEY,
       JSON.stringify({ childIds: uniqueChildIds, version: PIN_REGISTRY_VERSION }),
     );
@@ -214,21 +327,12 @@ export function createChildPinVault(options: ChildPinVaultOptions = {}): ChildPi
   const restoreCheckpoint = async (checkpoint: ChildPinVaultCheckpoint) => {
     const captured = checkpoints.get(checkpoint);
     if (!captured) throw new Error("Synthetic child PIN checkpoint is not recognized.");
-    const storage = resolveStorage();
-
     for (const [childId, serialized] of captured.credentials) {
-      if (serialized === null) {
-        await storage.removeItem(keyFor(childId));
-      } else {
-        await storage.setItem(keyFor(childId), serialized);
-      }
+      await writeStorageValue(keyFor(childId), serialized);
     }
-    if (captured.registry === null) {
-      await storage.removeItem(PIN_REGISTRY_KEY);
-    } else {
-      await storage.setItem(PIN_REGISTRY_KEY, captured.registry);
-    }
+    await writeStorageValue(PIN_REGISTRY_KEY, captured.registry);
 
+    const storage = resolveStorage();
     for (const [childId, serialized] of captured.credentials) {
       if ((await storage.getItem(keyFor(childId))) !== serialized) {
         throw new Error("Synthetic child PIN credential compensation could not be verified.");
@@ -258,6 +362,76 @@ export function createChildPinVault(options: ChildPinVaultOptions = {}): ChildPi
     throw cause;
   };
 
+  const readPendingTransaction = async (): Promise<StoredPinTransaction | null> => {
+    const serialized = await resolveStorage().getItem(PIN_TRANSACTION_KEY);
+    if (!serialized) return null;
+    const transaction = parseStoredPinTransaction(serialized);
+    if (!transaction) {
+      throw new Error("Invalid synthetic child PIN transaction journal.");
+    }
+    return transaction;
+  };
+
+  const beginTransaction = async (childIds: readonly string[] = []) => {
+    if (await readPendingTransaction()) {
+      throw new Error(
+        "Inconsistent local demo credential state: a transaction is already pending.",
+      );
+    }
+    const checkpoint = await createCheckpoint(childIds);
+    const captured = checkpoints.get(checkpoint);
+    if (!captured) throw new Error("Synthetic child PIN checkpoint is not recognized.");
+    const id = `pin-tx-${randomId()}`;
+    if (!isTransactionId(id)) {
+      throw new Error("Unable to create a synthetic child PIN transaction identifier.");
+    }
+    const transaction: StoredPinTransaction = {
+      credentials: [...captured.credentials].map(([childId, serialized]) => ({
+        childId,
+        serialized,
+      })),
+      id,
+      registry: captured.registry,
+      version: PIN_TRANSACTION_VERSION,
+    };
+    await writeStorageValue(PIN_TRANSACTION_KEY, JSON.stringify(transaction));
+    return id;
+  };
+
+  const transactionFor = async (transactionId: string) => {
+    const transaction = await readPendingTransaction();
+    if (!transaction || transaction.id !== transactionId) {
+      throw new Error("Inconsistent local demo credential transaction state.");
+    }
+    return transaction;
+  };
+
+  const rollbackTransaction = async (transactionId: string) => {
+    const transaction = await transactionFor(transactionId);
+    for (const credential of transaction.credentials) {
+      await writeStorageValue(keyFor(credential.childId), credential.serialized);
+    }
+    await writeStorageValue(PIN_REGISTRY_KEY, transaction.registry);
+
+    const storage = resolveStorage();
+    for (const credential of transaction.credentials) {
+      if ((await storage.getItem(keyFor(credential.childId))) !== credential.serialized) {
+        throw new Error("Synthetic child PIN transaction rollback could not be verified.");
+      }
+    }
+    if ((await storage.getItem(PIN_REGISTRY_KEY)) !== transaction.registry) {
+      throw new Error("Synthetic child PIN registry rollback could not be verified.");
+    }
+  };
+
+  const finalizeTransaction = async (transactionId: string) => {
+    await transactionFor(transactionId);
+    await writeStorageValue(PIN_TRANSACTION_KEY, null);
+    if ((await resolveStorage().getItem(PIN_TRANSACTION_KEY)) !== null) {
+      throw new Error("Synthetic child PIN transaction cleanup could not be verified.");
+    }
+  };
+
   const readStoredPin = async (childId: string): Promise<StoredPin | null> => {
     const storage = resolveStorage();
     const serialized = await storage.getItem(keyFor(childId));
@@ -271,7 +445,12 @@ export function createChildPinVault(options: ChildPinVaultOptions = {}): ChildPi
   };
 
   return {
+    beginTransaction,
     checkpoint: createCheckpoint,
+    finalizeTransaction,
+    async getPendingTransactionId() {
+      return (await readPendingTransaction())?.id ?? null;
+    },
     async isConfigured(childId) {
       return (await readStoredPin(childId)) !== null;
     },
@@ -279,7 +458,7 @@ export function createChildPinVault(options: ChildPinVaultOptions = {}): ChildPi
     async remove(childId) {
       const checkpoint = await createCheckpoint([childId]);
       try {
-        await resolveStorage().removeItem(keyFor(childId));
+        await writeStorageValue(keyFor(childId), null);
         await writeManagedChildIds(
           (await readManagedChildIds()).filter((managedChildId) => managedChildId !== childId),
         );
@@ -291,6 +470,7 @@ export function createChildPinVault(options: ChildPinVaultOptions = {}): ChildPi
       }
     },
     restore: restoreCheckpoint,
+    rollbackTransaction,
     async set(childId, pin) {
       const salt = randomId();
       const stored: StoredPin = {
@@ -304,7 +484,7 @@ export function createChildPinVault(options: ChildPinVaultOptions = {}): ChildPi
       const checkpoint = await createCheckpoint([childId]);
       const serialized = JSON.stringify(stored);
       try {
-        await resolveStorage().setItem(keyFor(childId), serialized);
+        await writeStorageValue(keyFor(childId), serialized);
         await writeManagedChildIds([...(await readManagedChildIds()), childId]);
         if ((await resolveStorage().getItem(keyFor(childId))) !== serialized) {
           throw new Error("Synthetic child PIN credential write could not be verified.");

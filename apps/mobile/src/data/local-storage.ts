@@ -72,6 +72,7 @@ export interface KeyValueStorage {
 export interface LocalFamilyEnvelopeV1 {
   nextSequence: number;
   offlineActions: readonly OfflineAction[];
+  pendingCredentialTransactionId?: string;
   pinAttempts: Readonly<Record<string, { failures: number; lockedUntil?: number }>>;
   processedCommandIds: readonly string[];
   snapshot: FamilySnapshot;
@@ -90,6 +91,10 @@ const isPossiblyEmptyString = (value: unknown): value is string =>
   typeof value === "string" && value.length <= MAX_STRING_LENGTH;
 
 const isOptionalString = (value: unknown) => value === undefined || isString(value);
+
+const isOptionalCredentialTransactionId = (value: unknown) =>
+  value === undefined ||
+  (typeof value === "string" && value.length <= 128 && /^pin-tx-[A-Za-z0-9_-]+$/.test(value));
 
 const isBoolean = (value: unknown): value is boolean => typeof value === "boolean";
 
@@ -390,6 +395,7 @@ function isEnvelope(value: unknown): value is LocalFamilyEnvelopeV1 {
     !isInteger(value.nextSequence, 1) ||
     !isBoundedArray(value.offlineActions) ||
     !value.offlineActions.every(isOfflineAction) ||
+    !isOptionalCredentialTransactionId(value.pendingCredentialTransactionId) ||
     !isPinAttempts(value.pinAttempts) ||
     !isBoundedArray(value.processedCommandIds) ||
     !value.processedCommandIds.every(isString) ||

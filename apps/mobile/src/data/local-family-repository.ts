@@ -44,7 +44,7 @@ import {
   type SubmitCompletionInput,
 } from "@fovari/validation";
 
-import type { ChildPinVault, ChildPinVaultCheckpoint } from "./child-pin-vault";
+import type { ChildPinVault } from "./child-pin-vault";
 import { createDemoSeed } from "./fixtures";
 import {
   type KeyValueStorage,
@@ -172,8 +172,9 @@ export function createLocalFamilyRepository(
   let mutationTail: Promise<void> = Promise.resolve();
 
   const ensureHydrated = async () => {
-    hydration ??= readLocalEnvelope(options.storage, options.seed).then((loaded) => {
+    hydration ??= readLocalEnvelope(options.storage, options.seed).then(async (loaded) => {
       envelope = loaded;
+      await reconcileCredentialTransaction();
     });
     await hydration;
   };
@@ -183,28 +184,75 @@ export function createLocalFamilyRepository(
     return envelope;
   };
 
-  const commit = async (candidate: LocalFamilyEnvelopeV1) => {
-    await writeLocalEnvelope(options.storage, candidate);
-    envelope = candidate;
-  };
+  const envelopesEqual = (left: LocalFamilyEnvelopeV1, right: LocalFamilyEnvelopeV1) =>
+    JSON.stringify(left) === JSON.stringify(right);
 
-  const restoreVaultOrThrow = async (
-    operation: string,
-    cause: unknown,
-    checkpoint: ChildPinVaultCheckpoint,
-  ): Promise<never> => {
-    const compensation = await options.pinVault.restore(checkpoint).then(
+  const inconsistentEnvelopeWrite = (cause: unknown, detail: unknown) =>
+    new AggregateError(
+      [cause, detail],
+      "Inconsistent local demo envelope state after ambiguous write.",
+      { cause },
+    );
+
+  const commit = async (
+    candidate: LocalFamilyEnvelopeV1,
+    prior: LocalFamilyEnvelopeV1 = current(),
+  ) => {
+    const write = await writeLocalEnvelope(options.storage, candidate).then(
       () => ({ ok: true as const }),
       (error: unknown) => ({ error, ok: false as const }),
     );
-    if (!compensation.ok) {
-      throw new AggregateError(
-        [cause, compensation.error],
-        `Inconsistent local demo credential state after failed ${operation}.`,
-        { cause },
-      );
+    if (write.ok) {
+      envelope = candidate;
+      return;
     }
-    throw cause;
+
+    const readback = await readLocalEnvelope(options.storage, options.seed).then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => ({ error, ok: false as const }),
+    );
+    if (!readback.ok) {
+      throw inconsistentEnvelopeWrite(write.error, readback.error);
+    }
+    if (envelopesEqual(readback.value, candidate)) {
+      envelope = candidate;
+      return;
+    }
+    if (envelopesEqual(readback.value, prior)) {
+      envelope = prior;
+      throw write.error;
+    }
+    throw inconsistentEnvelopeWrite(
+      write.error,
+      new Error("Envelope readback matched neither prior nor candidate state."),
+    );
+  };
+
+  const clearPendingCredentialTransaction = (
+    source: LocalFamilyEnvelopeV1,
+  ): LocalFamilyEnvelopeV1 => {
+    const candidate = copy(source);
+    delete candidate.pendingCredentialTransactionId;
+    return candidate;
+  };
+
+  const reconcileCredentialTransaction = async () => {
+    const loaded = current();
+    const marker = loaded.pendingCredentialTransactionId;
+    const journal = await options.pinVault.getPendingTransactionId();
+    if (marker !== undefined) {
+      if (journal !== marker) {
+        throw new Error("Inconsistent local demo credential transaction state.");
+      }
+      await options.pinVault.rollbackTransaction(marker);
+      const cleared = clearPendingCredentialTransaction(loaded);
+      await commit(cleared, loaded);
+      await options.pinVault.finalizeTransaction(marker);
+      return;
+    }
+    if (journal !== null) {
+      await options.pinVault.finalizeTransaction(journal);
+    }
   };
 
   const managedCredentialIds = async (candidate: LocalFamilyEnvelopeV1) => [
@@ -213,6 +261,81 @@ export function createLocalFamilyRepository(
       ...(await options.pinVault.listManagedChildIds()),
     ]),
   ];
+
+  const isAmbiguousEnvelopeError = (error: unknown) =>
+    error instanceof AggregateError &&
+    error.message === "Inconsistent local demo envelope state after ambiguous write.";
+
+  const credentialTransactionError = (
+    operation: string,
+    cause: unknown,
+    compensationCause: unknown,
+  ) =>
+    new AggregateError(
+      [cause, compensationCause],
+      `Inconsistent local demo credential state after failed ${operation}.`,
+      { cause },
+    );
+
+  const runCredentialTransaction = async (
+    candidate: LocalFamilyEnvelopeV1,
+    credentialIds: readonly string[],
+    operation: string,
+    mutateVault: () => Promise<void>,
+  ): Promise<FamilySnapshot> => {
+    const prior = copy(current());
+    const transactionId = await options.pinVault.beginTransaction(credentialIds);
+    const marked: LocalFamilyEnvelopeV1 = {
+      ...copy(prior),
+      pendingCredentialTransactionId: transactionId,
+    };
+
+    try {
+      await commit(marked, prior);
+    } catch (cause) {
+      if (isAmbiguousEnvelopeError(cause)) throw cause;
+      const cleanup = await options.pinVault.finalizeTransaction(transactionId).then(
+        () => ({ ok: true as const }),
+        (error: unknown) => ({ error, ok: false as const }),
+      );
+      if (!cleanup.ok) {
+        throw credentialTransactionError(operation, cause, cleanup.error);
+      }
+      throw cause;
+    }
+
+    try {
+      await mutateVault();
+      await commit(candidate, marked);
+    } catch (cause) {
+      if (isAmbiguousEnvelopeError(cause)) throw cause;
+      const rollback = await options.pinVault.rollbackTransaction(transactionId).then(
+        () => ({ ok: true as const }),
+        (error: unknown) => ({ error, ok: false as const }),
+      );
+      if (!rollback.ok) {
+        throw credentialTransactionError(operation, cause, rollback.error);
+      }
+      const envelopeRollback = await commit(prior, marked).then(
+        () => ({ ok: true as const }),
+        (error: unknown) => ({ error, ok: false as const }),
+      );
+      if (!envelopeRollback.ok) {
+        throw credentialTransactionError(operation, cause, envelopeRollback.error);
+      }
+      const cleanup = await options.pinVault.finalizeTransaction(transactionId).then(
+        () => ({ ok: true as const }),
+        (error: unknown) => ({ error, ok: false as const }),
+      );
+      if (!cleanup.ok) {
+        throw credentialTransactionError(operation, cause, cleanup.error);
+      }
+      throw cause;
+    }
+
+    await options.pinVault.finalizeTransaction(transactionId);
+    return copy(candidate.snapshot);
+  };
 
   const serialize = <T>(operation: () => Promise<T>): Promise<T> => {
     const result = mutationTail.then(operation, operation);
@@ -380,7 +503,6 @@ export function createLocalFamilyRepository(
         if (!adultDisplayName) throw new Error("Adult display name is required");
 
         const credentialIds = await managedCredentialIds(candidate);
-        const checkpoint = await options.pinVault.checkpoint(credentialIds);
         candidate.offlineActions = [];
         candidate.pinAttempts = {};
         candidate.snapshot = {
@@ -391,15 +513,16 @@ export function createLocalFamilyRepository(
           session: { actorId: context.actorId, kind: "adult" },
         };
         markProcessed(candidate, context.idempotencyKey);
-        try {
-          for (const childId of credentialIds) {
-            await options.pinVault.remove(childId);
-          }
-          await commit(candidate);
-          return copy(candidate.snapshot);
-        } catch (cause) {
-          return restoreVaultOrThrow("family setup replacement", cause, checkpoint);
-        }
+        return runCredentialTransaction(
+          candidate,
+          credentialIds,
+          "family setup replacement",
+          async () => {
+            for (const childId of credentialIds) {
+              await options.pinVault.remove(childId);
+            }
+          },
+        );
       });
     },
 
@@ -489,53 +612,49 @@ export function createLocalFamilyRepository(
           children.map((child, index) => [child.id, draft.childDrafts[index]!.clientId]),
         );
         const credentialIds = await managedCredentialIds(candidate);
-        const checkpoint = await options.pinVault.checkpoint([
-          ...credentialIds,
-          ...children.map((child) => child.id),
-        ]);
-        try {
-          for (const childId of credentialIds) {
-            await options.pinVault.remove(childId);
-          }
-          for (const child of children) {
-            const clientId = childIdToClientId[child.id];
-            const pin = clientId ? parsedChildPins[clientId] : undefined;
-            if (!pin) continue;
-            await options.pinVault.set(child.id, pin);
-          }
-
-          candidate.pinAttempts = {};
-          candidate.snapshot = {
-            ...candidate.snapshot,
-            achievements: [],
-            activeActor: { id: context.actorId, role: "family_owner" },
-            activeChildId: children[0]!.id,
-            adult: {
-              displayName: draft.adultDisplayName,
-              id: context.actorId,
-            },
-            calendar: [],
-            children,
-            completions: [],
-            familyName: family.name,
-            goals,
-            ledger: [],
-            notificationPreferences: copy(draft.notificationPreferences),
-            onboarding: createCompletedOnboardingState(),
-            onboardingDraft: null,
-            pointsName: family.pointsName,
-            redemptions: [],
-            rewards,
-            selectedRewardByChild,
-            session: { actorId: context.actorId, kind: "adult" },
-            timezone: family.timezone,
-          };
-          markProcessed(candidate, context.idempotencyKey);
-          await commit(candidate);
-          return copy(candidate.snapshot);
-        } catch (cause) {
-          return restoreVaultOrThrow("family setup completion", cause, checkpoint);
-        }
+        candidate.pinAttempts = {};
+        candidate.snapshot = {
+          ...candidate.snapshot,
+          achievements: [],
+          activeActor: { id: context.actorId, role: "family_owner" },
+          activeChildId: children[0]!.id,
+          adult: {
+            displayName: draft.adultDisplayName,
+            id: context.actorId,
+          },
+          calendar: [],
+          children,
+          completions: [],
+          familyName: family.name,
+          goals,
+          ledger: [],
+          notificationPreferences: copy(draft.notificationPreferences),
+          onboarding: createCompletedOnboardingState(),
+          onboardingDraft: null,
+          pointsName: family.pointsName,
+          redemptions: [],
+          rewards,
+          selectedRewardByChild,
+          session: { actorId: context.actorId, kind: "adult" },
+          timezone: family.timezone,
+        };
+        markProcessed(candidate, context.idempotencyKey);
+        return runCredentialTransaction(
+          candidate,
+          [...credentialIds, ...children.map((child) => child.id)],
+          "family setup completion",
+          async () => {
+            for (const childId of credentialIds) {
+              await options.pinVault.remove(childId);
+            }
+            for (const child of children) {
+              const clientId = childIdToClientId[child.id];
+              const pin = clientId ? parsedChildPins[clientId] : undefined;
+              if (!pin) continue;
+              await options.pinVault.set(child.id, pin);
+            }
+          },
+        );
       });
     },
 
@@ -550,7 +669,6 @@ export function createLocalFamilyRepository(
         const child = candidate.snapshot.children.find((item) => item.id === parsed.childId);
         if (!child) throw new Error("Child profile was not found");
 
-        const checkpoint = await options.pinVault.checkpoint([child.id]);
         candidate.snapshot = {
           ...candidate.snapshot,
           children: candidate.snapshot.children.map((item) =>
@@ -558,14 +676,9 @@ export function createLocalFamilyRepository(
           ),
         };
         markProcessed(candidate, context.idempotencyKey);
-
-        try {
-          await options.pinVault.set(child.id, parsed.pin);
-          await commit(candidate);
-          return copy(candidate.snapshot);
-        } catch (cause) {
-          return restoreVaultOrThrow("child PIN configuration", cause, checkpoint);
-        }
+        return runCredentialTransaction(candidate, [child.id], "child PIN configuration", () =>
+          options.pinVault.set(child.id, parsed.pin),
+        );
       });
     },
 
@@ -805,7 +918,6 @@ export function createLocalFamilyRepository(
         commandMatches(context, candidate.snapshot.familyId, context.idempotencyKey);
         requireAdultPermission(candidate, context, "manage_privacy");
         const credentialIds = await managedCredentialIds(candidate);
-        const checkpoint = await options.pinVault.checkpoint(credentialIds);
 
         const seed = createDemoSeed();
         candidate.nextSequence = 1;
@@ -813,15 +925,11 @@ export function createLocalFamilyRepository(
         candidate.pinAttempts = {};
         candidate.processedCommandIds = seed.ledger.map((entry) => entry.idempotencyKey);
         candidate.snapshot = seed;
-        try {
+        return runCredentialTransaction(candidate, credentialIds, "demo reset", async () => {
           for (const childId of credentialIds) {
             await options.pinVault.remove(childId);
           }
-          await commit(candidate);
-          return copy(candidate.snapshot);
-        } catch (cause) {
-          return restoreVaultOrThrow("demo reset", cause, checkpoint);
-        }
+        });
       });
     },
 

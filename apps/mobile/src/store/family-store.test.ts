@@ -8,8 +8,15 @@ import { createFamilyStore } from "./family-store";
 const createTestRepository = () =>
   createLocalFamilyRepository({
     pinVault: {
+      async beginTransaction() {
+        return "pin-tx-test";
+      },
       async checkpoint() {
         return { kind: "opaque-child-pin-vault-checkpoint" };
+      },
+      async finalizeTransaction() {},
+      async getPendingTransactionId() {
+        return null;
       },
       async isConfigured() {
         return false;
@@ -18,6 +25,7 @@ const createTestRepository = () =>
         return [];
       },
       async remove() {},
+      async rollbackTransaction() {},
       async restore() {},
       async set() {},
       async verify() {
