@@ -1,0 +1,547 @@
+import { describe, expect, it } from "vitest";
+
+import { createDemoSeed, DEMO_IDS } from "./fixtures";
+import * as localStorageModule from "./local-storage";
+import {
+  createMemoryStorage,
+  type KeyValueStorage,
+  readLocalEnvelope,
+  writeLocalEnvelope,
+} from "./local-storage";
+
+describe("versioned local family storage", () => {
+  it("uses the supplied seed once and restores a written envelope", async () => {
+    const storage = createMemoryStorage();
+    const seed = createDemoSeed();
+    const initial = await readLocalEnvelope(storage, seed);
+
+    expect(initial.version).toBe(1);
+    expect(initial.snapshot.familyName).toBe("The Rivera Family");
+
+    const changed = {
+      ...initial,
+      snapshot: { ...initial.snapshot, familyName: "The Park Family" },
+    };
+    await writeLocalEnvelope(storage, changed);
+
+    expect((await readLocalEnvelope(storage, seed)).snapshot.familyName).toBe("The Park Family");
+  });
+
+  it("persists a complete onboarding draft using the shared child-draft contract", async () => {
+    const storage = createMemoryStorage();
+    const initial = await readLocalEnvelope(storage, createDemoSeed());
+    const withDraft = {
+      ...initial,
+      snapshot: {
+        ...initial.snapshot,
+        onboardingDraft: {
+          adultDisplayName: "Jamie",
+          childDrafts: [
+            {
+              clientId: "draft-alex",
+              displayName: "Alex",
+              experienceMode: "adventurer" as const,
+              pinRequested: true,
+            },
+          ],
+          familyName: "The Rivera Family",
+          notificationPreferences: initial.snapshot.notificationPreferences,
+          pointsName: "Stars",
+          selectedStarterGoalIds: [],
+          selectedStarterRewardIds: [],
+          timezone: "America/New_York",
+        },
+      },
+    };
+
+    await writeLocalEnvelope(storage, withDraft);
+
+    expect((await readLocalEnvelope(storage, createDemoSeed())).snapshot.onboardingDraft).toEqual(
+      withDraft.snapshot.onboardingDraft,
+    );
+  });
+
+  it("rejects raw PIN and credential-like secrets anywhere in persisted local family JSON", async () => {
+    const seed = createDemoSeed();
+    const valid = await readLocalEnvelope(createMemoryStorage(), seed);
+    const onboardingDraft = {
+      adultDisplayName: "Jamie",
+      childDrafts: [
+        {
+          clientId: "draft-alex",
+          displayName: "Alex",
+          experienceMode: "adventurer" as const,
+          pinRequested: true,
+        },
+      ],
+      familyName: "The Rivera Family",
+      notificationPreferences: seed.notificationPreferences,
+      pointsName: "Stars",
+      selectedStarterGoalIds: [],
+      selectedStarterRewardIds: [],
+      timezone: "America/New_York",
+    };
+    const secretBearingRecords = [
+      { ...valid, pin: "1234" },
+      { ...valid, childPins: { [seed.children[0]!.id]: "1234" } },
+      {
+        ...valid,
+        offlineActions: [
+          {
+            actorId: seed.children[0]!.id,
+            attemptCount: 0,
+            commandType: "save_timer",
+            createdAt: "2026-07-24T13:15:00.000Z",
+            entityId: seed.goals[0]!.id,
+            idempotencyKey: "secret-pincode",
+            payload: { pincode: "1234" },
+            status: "pending",
+          },
+        ],
+      },
+      {
+        ...valid,
+        offlineActions: [
+          {
+            actorId: seed.children[0]!.id,
+            attemptCount: 0,
+            commandType: "save_timer",
+            createdAt: "2026-07-24T13:15:00.000Z",
+            entityId: seed.goals[0]!.id,
+            idempotencyKey: "secret-pin2",
+            payload: { pin2: "1234" },
+            status: "pending",
+          },
+        ],
+      },
+      {
+        ...valid,
+        offlineActions: [
+          {
+            actorId: seed.children[0]!.id,
+            attemptCount: 0,
+            commandType: "save_timer",
+            createdAt: "2026-07-24T13:15:00.000Z",
+            entityId: seed.goals[0]!.id,
+            idempotencyKey: "secret-auth-code",
+            payload: { nested: { authCode: "1234" } },
+            status: "pending",
+          },
+        ],
+      },
+      {
+        ...valid,
+        snapshot: {
+          ...seed,
+          children: seed.children.map((child, index) =>
+            index === 0
+              ? { ...child, profile: { credentials: { secret: { pin: "1234" } } } }
+              : child,
+          ),
+        },
+      },
+      {
+        ...valid,
+        snapshot: {
+          ...seed,
+          onboardingDraft: {
+            ...onboardingDraft,
+            childDrafts: [
+              {
+                ...onboardingDraft.childDrafts[0]!,
+                credential: { secretPin: "1234" },
+              },
+            ],
+          },
+        },
+      },
+    ];
+
+    for (const value of secretBearingRecords) {
+      await expect(
+        readLocalEnvelope(
+          createMemoryStorage({ "fovari.local-family": JSON.stringify(value) }),
+          seed,
+        ),
+      ).rejects.toThrow("Invalid local family data");
+    }
+  });
+
+  it("strictly rejects unknown fields at the envelope, snapshot, child, and onboarding child boundaries", async () => {
+    const seed = createDemoSeed();
+    const valid = await readLocalEnvelope(createMemoryStorage(), seed);
+    const onboardingDraft = {
+      adultDisplayName: "Jamie",
+      childDrafts: [
+        {
+          clientId: "draft-alex",
+          displayName: "Alex",
+          experienceMode: "adventurer" as const,
+          pinRequested: true,
+        },
+      ],
+      familyName: "The Rivera Family",
+      notificationPreferences: seed.notificationPreferences,
+      pointsName: "Stars",
+      selectedStarterGoalIds: [],
+      selectedStarterRewardIds: [],
+      timezone: "America/New_York",
+    };
+    const unknownFieldRecords = [
+      { ...valid, debugLabel: "unknown root data" },
+      { ...valid, snapshot: { ...seed, debugLabel: "unknown snapshot data" } },
+      {
+        ...valid,
+        snapshot: {
+          ...seed,
+          children: seed.children.map((child, index) =>
+            index === 0 ? { ...child, favoriteColor: "purple" } : child,
+          ),
+        },
+      },
+      {
+        ...valid,
+        snapshot: {
+          ...seed,
+          onboardingDraft: {
+            ...onboardingDraft,
+            childDrafts: [{ ...onboardingDraft.childDrafts[0]!, nickname: "A" }],
+          },
+        },
+      },
+    ];
+
+    for (const value of unknownFieldRecords) {
+      await expect(
+        readLocalEnvelope(
+          createMemoryStorage({ "fovari.local-family": JSON.stringify(value) }),
+          seed,
+        ),
+      ).rejects.toThrow("Invalid local family data");
+    }
+  });
+
+  it("rejects secret-bearing unknown fields before writing while preserving legitimate PIN metadata", async () => {
+    const seed = createDemoSeed();
+    const initial = await readLocalEnvelope(createMemoryStorage(), seed);
+    const storage = createMemoryStorage();
+
+    await expect(
+      writeLocalEnvelope(storage, {
+        ...initial,
+        pinAttempts: { [seed.children[0]!.id]: { failures: 1, lockedUntil: 1234 } },
+        snapshot: {
+          ...seed,
+          children: seed.children.map((child, index) =>
+            index === 0 ? { ...child, pinConfigured: true, secretCredential: "1234" } : child,
+          ),
+        },
+      }),
+    ).rejects.toThrow("Invalid local family data");
+    expect(await storage.getItem("fovari.local-family")).toBeNull();
+
+    await expect(
+      writeLocalEnvelope(storage, {
+        ...initial,
+        pinAttempts: { [seed.children[0]!.id]: { failures: 1, lockedUntil: 1234 } },
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejects unsupported data without silently changing permissions", async () => {
+    const storage = createMemoryStorage({
+      "fovari.local-family": JSON.stringify({ version: 99 }),
+    });
+
+    await expect(readLocalEnvelope(storage, createDemoSeed())).rejects.toThrow(
+      "Unsupported local family data",
+    );
+  });
+
+  it("rejects corrupt, incomplete, and invalid persisted envelopes", async () => {
+    const seed = createDemoSeed();
+    const valid = await readLocalEnvelope(createMemoryStorage(), seed);
+    const invalidRecords = [
+      "{not json",
+      JSON.stringify(null),
+      JSON.stringify({ version: 1 }),
+      JSON.stringify({ ...valid, nextSequence: -1 }),
+      JSON.stringify({
+        ...valid,
+        offlineActions: [
+          {
+            actorId: seed.adult.id,
+            attemptCount: 0,
+            commandType: "select_reward",
+            createdAt: "2026-07-24T13:15:00.000Z",
+            entityId: "reward-1",
+            idempotencyKey: "command-1",
+            payload: {},
+            status: "unsafe_status",
+          },
+        ],
+      }),
+      JSON.stringify({ ...valid, snapshot: { ...seed, familyName: undefined } }),
+      JSON.stringify({
+        ...valid,
+        snapshot: {
+          ...seed,
+          onboardingDraft: {
+            adultDisplayName: "Jamie",
+            childDrafts: [],
+            familyName: "The Rivera Family",
+            notificationPreferences: {},
+            pointsName: "Stars",
+            selectedStarterGoalIds: [],
+            selectedStarterRewardIds: [],
+            timezone: "America/New_York",
+          },
+        },
+      }),
+    ];
+
+    for (const serialized of invalidRecords) {
+      await expect(
+        readLocalEnvelope(createMemoryStorage({ "fovari.local-family": serialized }), seed),
+      ).rejects.toThrow("Invalid local family data");
+    }
+  });
+
+  it("rejects session and active-actor records that do not describe the same family identity", async () => {
+    const seed = createDemoSeed();
+    const valid = await readLocalEnvelope(createMemoryStorage(), seed);
+    const inconsistent = {
+      ...valid,
+      snapshot: {
+        ...seed,
+        session: { actorId: seed.children[0]?.id ?? "unknown", kind: "adult" } as const,
+      },
+    };
+
+    await expect(
+      readLocalEnvelope(
+        createMemoryStorage({ "fovari.local-family": JSON.stringify(inconsistent) }),
+        seed,
+      ),
+    ).rejects.toThrow("Invalid local family data");
+  });
+
+  it("rejects child sessions whose authenticated child diverges from activeChildId on read and write", async () => {
+    const seed = createDemoSeed();
+    const initial = await readLocalEnvelope(createMemoryStorage(), seed);
+    const divergent = {
+      ...initial,
+      snapshot: {
+        ...seed,
+        activeActor: { childId: DEMO_IDS.alex, id: DEMO_IDS.alex, role: "child" as const },
+        activeChildId: DEMO_IDS.june,
+        session: {
+          actorId: DEMO_IDS.alex,
+          childId: DEMO_IDS.alex,
+          kind: "child" as const,
+        },
+      },
+    };
+
+    await expect(
+      readLocalEnvelope(
+        createMemoryStorage({ "fovari.local-family": JSON.stringify(divergent) }),
+        seed,
+      ),
+    ).rejects.toThrow("Invalid local family data");
+    await expect(writeLocalEnvelope(createMemoryStorage(), divergent)).rejects.toThrow(
+      "Invalid local family data",
+    );
+  });
+
+  it("rejects restart state that cannot be reconciled with the synthetic family", async () => {
+    const seed = createDemoSeed();
+    const valid = await readLocalEnvelope(createMemoryStorage(), seed);
+    const ledgerEntry = seed.ledger[0]!;
+    const invalidRecords = [
+      {
+        ...valid,
+        pinAttempts: { "unknown-child": { failures: 1 } },
+      },
+      { ...valid, processedCommandIds: [] },
+      {
+        ...valid,
+        snapshot: { ...seed, ledger: [...seed.ledger, ledgerEntry] },
+      },
+      {
+        ...valid,
+        snapshot: {
+          ...seed,
+          ledger: [ledgerEntry, { ...seed.ledger[1]!, id: ledgerEntry.id }],
+        },
+      },
+      {
+        ...valid,
+        snapshot: {
+          ...seed,
+          ledger: [ledgerEntry, { ...seed.ledger[1]!, idempotencyKey: ledgerEntry.idempotencyKey }],
+        },
+      },
+      {
+        ...valid,
+        snapshot: {
+          ...seed,
+          children: seed.children.map((child) =>
+            child.id === ledgerEntry.childId ? { ...child, points: child.points + 1 } : child,
+          ),
+        },
+      },
+      {
+        ...valid,
+        offlineActions: [
+          {
+            actorId: "unknown-actor",
+            attemptCount: 0,
+            commandType: "select_reward",
+            createdAt: "2026-07-24T13:15:00.000Z",
+            entityId: "reward-1",
+            idempotencyKey: "command-1",
+            payload: {},
+            status: "pending",
+          },
+        ],
+      },
+    ];
+
+    for (const invalid of invalidRecords) {
+      await expect(
+        readLocalEnvelope(
+          createMemoryStorage({ "fovari.local-family": JSON.stringify(invalid) }),
+          seed,
+        ),
+      ).rejects.toThrow("Invalid local family data");
+    }
+  });
+
+  it("validates an envelope before writing it", async () => {
+    const storage = createMemoryStorage();
+    const initial = await readLocalEnvelope(storage, createDemoSeed());
+
+    await expect(writeLocalEnvelope(storage, { ...initial, nextSequence: 1.5 })).rejects.toThrow(
+      "Invalid local family data",
+    );
+    expect(await storage.getItem("fovari.local-family")).toBeNull();
+  });
+
+  it("clears and verifies the local envelope without requiring repository hydration", async () => {
+    const storage = createMemoryStorage();
+    const initial = await readLocalEnvelope(storage, createDemoSeed());
+    await writeLocalEnvelope(storage, initial);
+    const clearLocalEnvelope = Reflect.get(localStorageModule, "clearLocalEnvelope") as unknown;
+
+    expect(clearLocalEnvelope).toBeTypeOf("function");
+    await (clearLocalEnvelope as (storage: KeyValueStorage) => Promise<void>)(storage);
+
+    expect(await storage.getItem("fovari.local-family")).toBeNull();
+  });
+
+  it("accepts the childless transitional snapshot used by persisted family setup", async () => {
+    const storage = createMemoryStorage();
+    const initial = await readLocalEnvelope(storage, createDemoSeed());
+    const setupEnvelope = {
+      ...initial,
+      pinAttempts: {},
+      processedCommandIds: ["begin-setup"],
+      snapshot: {
+        ...initial.snapshot,
+        achievements: [],
+        activeChildId: "",
+        calendar: [],
+        children: [],
+        completions: [],
+        familyName: "",
+        goals: [],
+        ledger: [],
+        onboarding: {
+          completedSteps: [],
+          currentStep: "adult" as const,
+          status: "not_started" as const,
+        },
+        redemptions: [],
+        rewards: [],
+        selectedRewardByChild: {},
+      },
+    };
+
+    await writeLocalEnvelope(storage, setupEnvelope);
+
+    expect((await readLocalEnvelope(storage, createDemoSeed())).snapshot.children).toEqual([]);
+  });
+
+  it("rejects an empty family name once a transitional snapshot has children", async () => {
+    const storage = createMemoryStorage();
+    const initial = await readLocalEnvelope(storage, createDemoSeed());
+    const invalid = {
+      ...initial,
+      snapshot: {
+        ...initial.snapshot,
+        familyName: "",
+        onboarding: {
+          completedSteps: ["adult"] as const,
+          currentStep: "family" as const,
+          status: "in_progress" as const,
+        },
+      },
+    };
+
+    await expect(writeLocalEnvelope(storage, invalid)).rejects.toThrow("Invalid local family data");
+    expect(await storage.getItem("fovari.local-family")).toBeNull();
+  });
+
+  it("accepts only a bounded versioned credential transaction marker", async () => {
+    const initial = await readLocalEnvelope(createMemoryStorage(), createDemoSeed());
+    const transactionId = "pin-tx-transaction_123";
+    const validStorage = createMemoryStorage();
+
+    await writeLocalEnvelope(validStorage, {
+      ...initial,
+      pendingCredentialTransactionId: transactionId,
+    });
+    expect(
+      (await readLocalEnvelope(validStorage, createDemoSeed())).pendingCredentialTransactionId,
+    ).toBe(transactionId);
+
+    for (const pendingCredentialTransactionId of [
+      "",
+      "transaction-without-versioned-prefix",
+      `pin-tx-${"x".repeat(129)}`,
+      "pin-tx-invalid space",
+    ]) {
+      await expect(
+        writeLocalEnvelope(createMemoryStorage(), {
+          ...initial,
+          pendingCredentialTransactionId,
+        }),
+      ).rejects.toThrow("Invalid local family data");
+    }
+  });
+
+  it("does not write a syntactically valid envelope beyond the local size limit", async () => {
+    const storage = createMemoryStorage();
+    const initial = await readLocalEnvelope(storage, createDemoSeed());
+    const oversized = {
+      ...initial,
+      offlineActions: Array.from({ length: 500 }, (_, index) => ({
+        actorId: initial.snapshot.adult.id,
+        attemptCount: 0,
+        commandType: "select_reward" as const,
+        createdAt: "2026-07-24T13:15:00.000Z",
+        entityId: "reward-1",
+        idempotencyKey: `oversized-${index}`,
+        lastError: "x".repeat(4_096),
+        payload: {},
+        status: "pending" as const,
+      })),
+    };
+
+    await expect(writeLocalEnvelope(storage, oversized)).rejects.toThrow(
+      "Invalid local family data",
+    );
+    expect(await storage.getItem("fovari.local-family")).toBeNull();
+  });
+});

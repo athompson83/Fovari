@@ -1,0 +1,15 @@
+node_modules/
+.turbo/
+.expo/
+dist/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
+apps/mobile/android/
+apps/mobile/ios/
+.worktrees/
+.superpowers/
+.playwright-cli/
+output/

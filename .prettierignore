@@ -1,0 +1,5 @@
+pnpm-lock.yaml
+.playwright-cli/
+output/
+apps/mobile/dist/
+apps/mobile/expo-env.d.ts
