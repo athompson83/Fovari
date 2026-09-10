@@ -1,0 +1,14 @@
+# Fovari — concept-stage shared guidance
+
+- Read `README.md`, `PROJECT_CHECKLIST.md`, and `PROGRESS.md`; inspect scoped guidance. The tagline is defined, not the product requirements or stack. Do not infer a habit app, gamification model, or audience from the name/tagline alone.
+- Before coding, define the primary user/progress problem, the smallest valuable behavior, measurable end-to-end acceptance, non-goals, and privacy/notification/retention requirements. Preserve the README's requirement to confirm the existing GPL-3.0 model before introducing application code; do not change the license silently.
+- Use the smallest architecture supported by those requirements. No default auth, billing, database, queues, AI provider, or multiple services. Keep any adopted `APP_PROJECT_CONTROL_STANDARD.md` canonical; avoid a second constitution or empty document collection.
+- No manifest, code, or executable commands exist at this baseline. After stack selection, commit a compatible pinned toolchain and authoritative lockfile and prove frozen clean install, start, and a real synthetic smoke path without Production credentials or paid-provider calls.
+- Never add placeholder-success scripts, swallow errors, or skip required checks silently. Demonstrate deliberate-failure detection when establishing/changing verification.
+- Document variable names, consumers, environments, public/server-only classification, and validation—not secret values. Treat notifications and other external actions as side effects; use test sinks until authorized.
+- Run focused local checks before coherent pushes; broaden for permissions/data/contracts, dependencies/toolchains/workflows, and agent policy. Read full failure logs before reruns; avoid speculative pushes, duplicate workflows, and unnecessary matrices.
+- Ordinary prose-only routing needs an explicit allowlist; policy/executable Markdown is impact-bearing. Required workflows must remain observable; prove routing and a final gate rejecting failed/cancelled/missing required work.
+- Use least privilege, immutable action references, and untrusted/privileged separation. Cancel superseded PR validation only where safe, not deployments/migrations. Check actual platform rules, project IDs, environment scopes, release triggers, recovery, and authority before merging; merging may deploy.
+- Reuse approved projects/previews, not duplicates. Fix relevant blockers/invariants and record unrelated cleanup without silently expanding the MVP.
+- Track implemented, wired, locally verified, hosted verified, and released independently with exact SHA, command/results, target, and evidence. Keep checklist and current handoff concise, preserve historical evidence, and report genuine owner decisions and next smallest task.
+- Load deeper references/skills only when needed; confirm fresh Codex/Claude loading and real command discovery. Documentation does not certify a runnable foundation.
