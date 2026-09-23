@@ -1,9 +1,0 @@
-.ua/intermediate/
-.ua/tmp/
-.ua/knowledge-graph.json
-.ua/meta.json
-.ua/fingerprints.json
-docs/architecture/agent-context.md
-docs/architecture/agent-context-provenance.json
-docs/architecture/fovari-concept-path.mmd
-!LICENSE
