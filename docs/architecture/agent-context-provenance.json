@@ -1,0 +1,49 @@
+{
+  "schemaVersion": "1.0.0",
+  "project": "Fovari",
+  "sourceBranch": "main",
+  "sourceCommitSha": "51b92bd17a6dc416fd5e710a497fef89c4a69539",
+  "tool": "Understand-Anything",
+  "toolRevision": "6df3065f1d8ddc2ce3615314d1d493f36d6b1c80",
+  "inventory": {
+    "fileCount": 2,
+    "filteredByIgnore": 1,
+    "categoryCounts": {
+      "code": 1,
+      "docs": 1
+    },
+    "languageCounts": {
+      "unknown": 1,
+      "markdown": 1
+    },
+    "languages": [
+      "Markdown",
+      "Unknown"
+    ],
+    "frameworks": []
+  },
+  "parser": {
+    "filesParsed": 1,
+    "filesSkipped": [
+      "LICENSE"
+    ],
+    "unreadable": [],
+    "limitations": [
+      "LICENSE was not structurally parsed; it remains an inventory node.",
+      "No application source files, modules, dependencies, tests, or deployment configuration are present in the scanned inventory."
+    ]
+  },
+  "graph": {
+    "nodeCount": 2,
+    "edgeCount": 0,
+    "layerCount": 1,
+    "tourStepCount": 5
+  },
+  "validation": {
+    "allInventoryPathsRepresented": true,
+    "allNodePathsInInventory": true,
+    "allEdgeEndpointsExist": true,
+    "everyNodeAssignedExactlyOnce": true,
+    "tourValid": true
+  }
+}

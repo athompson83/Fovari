@@ -1,0 +1,8 @@
+flowchart TD
+  Concept[Product name and tagline only] --> Brief[Define user, problem, behavior, privacy, MVP, and acceptance]
+  Brief --> Delivery[Choose MVP to Beta to Production path]
+  Delivery --> Tech[Select a technical stack after constraints are known]
+  Tech --> Build[Begin implementation]
+  License[GPL-3.0 in repository] --> Confirm[Confirm fit for intended commercial and distribution model]
+  Confirm --> Build
+  Current[Current branch: no requirements, UX, architecture, implementation, or deployment] -. scope boundary .- Concept

@@ -1,0 +1,95 @@
+{
+  "version": "1.0.0",
+  "project": {
+    "name": "Fovari",
+    "languages": [
+      "Markdown",
+      "Unknown"
+    ],
+    "frameworks": [],
+    "description": "Product-name and concept repository with a tagline and GNU GPL-3.0 license; product requirements, UX, technical architecture, implementation, and deployment have not been started.",
+    "analyzedAt": "2026-09-23T19:58:44.949Z",
+    "gitCommitHash": "51b92bd17a6dc416fd5e710a497fef89c4a69539"
+  },
+  "nodes": [
+    {
+      "id": "file:LICENSE",
+      "type": "file",
+      "name": "LICENSE",
+      "filePath": "LICENSE",
+      "summary": "The tracked GNU General Public License v3.0 text; README asks the owner to confirm this license suits the commercial and distribution model before application code is added.",
+      "tags": [
+        "file",
+        "code",
+        "unknown",
+        "parser-skipped"
+      ]
+    },
+    {
+      "id": "document:README.md",
+      "type": "document",
+      "name": "README.md",
+      "filePath": "README.md",
+      "summary": "Defines Fovari as a concept-stage product name with the tagline “Progress worth celebrating,” and states that requirements, UX, architecture, implementation, and deployment are not started. It lists decisions required before implementation.",
+      "tags": [
+        "document",
+        "docs",
+        "markdown"
+      ]
+    }
+  ],
+  "edges": [],
+  "layers": [
+    {
+      "id": "layer:concept-and-license",
+      "name": "Product Concept and License",
+      "description": "This repository currently consists of a product concept README and GPL-3.0 license, with no implementation architecture.",
+      "nodeIds": [
+        "file:LICENSE",
+        "document:README.md"
+      ]
+    }
+  ],
+  "tour": [
+    {
+      "order": 1,
+      "title": "Concept Identity",
+      "description": "The README defines Fovari as a product name and gives the tagline “Progress worth celebrating.” It does not yet establish a primary user, use case, or product requirements.",
+      "nodeIds": [
+        "document:README.md"
+      ]
+    },
+    {
+      "order": 2,
+      "title": "Current State",
+      "description": "The README says that user experience, technical architecture, MVP implementation, and production deployment have not started. There is no application architecture to infer from this repository.",
+      "nodeIds": [
+        "document:README.md"
+      ]
+    },
+    {
+      "order": 3,
+      "title": "Product Brief First",
+      "description": "Before scaffolding, the README asks for the primary user, progress problem, core behavior, privacy expectations, smallest valuable MVP, and acceptance criteria. Those decisions should guide any later technical choices.",
+      "nodeIds": [
+        "document:README.md"
+      ]
+    },
+    {
+      "order": 4,
+      "title": "Delivery Criteria",
+      "description": "The README requires a defined MVP-to-Beta-to-Production path and says the next meaningful commit should establish the product rather than generic scaffolding.",
+      "nodeIds": [
+        "document:README.md"
+      ]
+    },
+    {
+      "order": 5,
+      "title": "License Decision",
+      "description": "The tracked LICENSE is GNU GPL-3.0. The README says to confirm that license fits the intended commercial and distribution model before introducing application code.",
+      "nodeIds": [
+        "file:LICENSE"
+      ]
+    }
+  ]
+}

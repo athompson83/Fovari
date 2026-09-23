@@ -1,0 +1,27 @@
+{
+  "version": "1.0.0",
+  "gitCommitHash": "51b92bd17a6dc416fd5e710a497fef89c4a69539",
+  "generatedAt": "2026-09-23T19:58:45.203Z",
+  "files": {
+    "LICENSE": {
+      "filePath": "LICENSE",
+      "contentHash": "230184f60bae2feaf244f10a8bac053c8ff33a183bcc365b4d8b876d2b7f4809",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 675,
+      "hasStructuralAnalysis": false
+    },
+    "README.md": {
+      "filePath": "README.md",
+      "contentHash": "4b40c1eec85d0e0b3d95ca11444a48de37834864adb4410d5a8a2a23df3e6107",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 40,
+      "hasStructuralAnalysis": false
+    }
+  }
+}
